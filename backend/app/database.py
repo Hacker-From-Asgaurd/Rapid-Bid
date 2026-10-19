@@ -25,8 +25,19 @@ def migrate_db(eng):
                     pass
 
             add_column_if_missing("rates_versions", "multi_blade_rates", "JSON")
+            add_column_if_missing("rates_versions", "part_rates", "JSON")
             add_column_if_missing("quotes", "damper_type", "VARCHAR DEFAULT 'rack_and_pinion'")
             add_column_if_missing("quotes", "multi_blade_config", "JSON")
+            add_column_if_missing("quotes", "approval_comment", "TEXT")
+            add_column_if_missing("quotes", "discount_pct", "FLOAT DEFAULT 0.0")
+            add_column_if_missing("quotes", "rfq_received_at", "DATETIME")
+            add_column_if_missing("quotes", "approved_at", "DATETIME")
+            add_column_if_missing("quotes", "sent_at", "DATETIME")
+            add_column_if_missing("company_settings", "approval_threshold_value", "FLOAT DEFAULT 2500000.0")
+            add_column_if_missing("company_settings", "approval_min_margin_pct", "FLOAT DEFAULT 12.0")
+            add_column_if_missing("company_settings", "approval_max_discount_pct", "FLOAT DEFAULT 10.0")
+            add_column_if_missing("company_settings", "stale_rate_days_limit", "INTEGER DEFAULT 30")
+            add_column_if_missing("company_settings", "manual_baseline_hours_per_quote", "FLOAT DEFAULT 4.0")
             add_column_if_missing("verified_sizes", "damper_type", "VARCHAR DEFAULT 'rack_and_pinion'")
             add_column_if_missing("validation_rules", "damper_type", "VARCHAR DEFAULT 'all'")
     except Exception:

@@ -19,38 +19,36 @@ def seed_database(db: Session):
     migrate_db(engine)
     seed_data = load_seed_json()
     
-    # 1. Seed Users if empty
-    if db.query(User).count() == 0:
+    # 1. Seed / Ensure Users
+    admin_user = db.query(User).filter((User.email == "admin@damperquote.com") | (User.email == "admin")).first()
+    if not admin_user:
         admin_user = User(
             email="admin@damperquote.com",
-            hashed_password=get_password_hash("DamperQuote2026!"),
-            full_name="Pune Plant Admin",
+            hashed_password=get_password_hash("admin123"),
+            full_name="Plant Admin",
             role="Admin",
-            must_change_password=True
+            must_change_password=False
         )
-        sales_user = User(
-            email="sales@damperquote.com",
-            hashed_password=get_password_hash("DamperQuote2026!"),
-            full_name="Pune Sales Manager",
-            role="Sales",
-            must_change_password=True
+        db.add(admin_user)
+    else:
+        admin_user.hashed_password = get_password_hash("admin123")
+        admin_user.must_change_password = False
+
+    member_user = db.query(User).filter((User.email == "member") | (User.email == "member@damperquote.com")).first()
+    if not member_user:
+        member_user = User(
+            email="member",
+            hashed_password=get_password_hash("member123"),
+            full_name="Quotation Team Member",
+            role="Quotation Member",
+            must_change_password=False
         )
-        eng_user = User(
-            email="engineer@damperquote.com",
-            hashed_password=get_password_hash("DamperQuote2026!"),
-            full_name="Pune Chief Estimator",
-            role="Estimation Engineer",
-            must_change_password=True
-        )
-        mgr_user = User(
-            email="manager@damperquote.com",
-            hashed_password=get_password_hash("DamperQuote2026!"),
-            full_name="Pune Vice President",
-            role="Manager/Approver",
-            must_change_password=True
-        )
-        db.add_all([admin_user, sales_user, eng_user, mgr_user])
-        db.commit()
+        db.add(member_user)
+    else:
+        member_user.hashed_password = get_password_hash("member123")
+        member_user.must_change_password = False
+
+    db.commit()
 
     admin_user = db.query(User).filter(User.role == "Admin").first()
 

@@ -1,116 +1,169 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import DamperLogo from './DamperLogo';
 import { 
-  Building2, 
   FileText, 
-  Calculator, 
-  Settings, 
+  BarChart3,
   SlidersHorizontal,
-  ChevronRight,
   ShieldCheck,
-  Sparkles
-  ,Ruler
+  Server,
+  LogOut,
+  User,
+  ArrowRightLeft,
+  Plus
 } from 'lucide-react';
+import { quotesApi } from '../services/api';
 
-export default function Navbar({ user, currentView, setView }) {
+export default function Navbar({ user, currentView, setView, onLogout, onSwitchUser }) {
+  const [pendingCount, setPendingCount] = useState(0);
+
+  useEffect(() => {
+    // Poll/fetch pending approvals count
+    quotesApi.getPendingApprovalsCount()
+      .then((res) => {
+        setPendingCount(res.pending_count || 0);
+      })
+      .catch(() => {});
+
+    const interval = setInterval(() => {
+      quotesApi.getPendingApprovalsCount()
+        .then((res) => setPendingCount(res.pending_count || 0))
+        .catch(() => {});
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [currentView]);
+
+  const isAdmin = user?.role === 'Admin' || user?.role === 'Manager' || user?.role === 'Manager/Approver';
+
   return (
     <div className="sticky top-0 z-40">
-      {/* Main Clean Warm Porcelain Navbar */}
-      <header className="bg-[#FFFDFB]/95 backdrop-blur-md border-b border-[#EAE5DB] shadow-[0_1px_3px_0_rgba(40,30,20,0.03)] transition-colors">
+      <header className="backdrop-blur-md border-b transition-colors duration-200 bg-surface/95 border-border-subtle text-text-primary shadow-[0_1px_3px_0_rgba(20,18,31,0.03)]">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            {/* Logo & Brand with Earthy Sage Accent */}
+          <div className="flex items-center justify-between h-16 gap-2">
+            
+            {/* Logo & Brand: RAPID BID with Damper Logo */}
             <div 
-              className="flex items-center gap-3 cursor-pointer group" 
-              onClick={() => setView('new-quote')}
+              className="flex items-center gap-3 cursor-pointer group shrink-0" 
+              onClick={() => setView('dashboard')}
             >
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#3D6353] to-[#2C483D] flex items-center justify-center text-white shadow-md shadow-[#3D6353]/20 group-hover:scale-105 transition-transform">
-                <Building2 className="w-5 h-5 text-white" />
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center shadow-md group-hover:scale-105 transition-transform border bg-accent text-accent-contrast border-accent">
+                <DamperLogo className="w-6 h-6" />
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="font-bold text-xl tracking-tight text-[#242826]">
-                    DAMPER QUOTE <span className="text-[#3D6353]">PRO</span>
+                  <span className="font-extrabold text-xl tracking-tight text-text-primary">
+                    RAPID <span className="text-accent-text">BID</span>
                   </span>
-                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#EEF5F1] text-[#2C5040] border border-[#D0E2D7]">
-                    CPQ SUITE
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border bg-tint-mint text-text-primary border-border-subtle">
+                    {isAdmin ? 'ADMIN PORTAL' : 'MEMBER PORTAL'}
                   </span>
                 </div>
-                <p className="text-[11px] text-[#5C6460] font-medium -mt-0.5">
-                  Industrial Valve & Damper Cost Engineering • Pune
+                <p className="text-[10px] font-medium -mt-0.5 flex items-center gap-1.5 text-text-secondary">
+                  <span>Valve & Damper Estimation</span>
+                  <span className="text-text-muted">•</span>
+                  <span className="font-semibold flex items-center gap-1 text-accent-text">
+                    <Server className="w-2.5 h-2.5 inline" /> Local Server
+                  </span>
                 </p>
               </div>
             </div>
 
-            {/* Navigation Pills */}
-            <nav className="flex items-center space-x-1 sm:space-x-2 overflow-x-auto py-1">
+            {/* Streamlined Navigation Tabs */}
+            <nav className="flex items-center space-x-1 sm:space-x-1.5 overflow-x-auto py-1 mx-2">
+              
+              {/* 1. Dashboard Tab */}
+              <button
+                onClick={() => setView('dashboard')}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 cursor-pointer ${
+                  currentView === 'dashboard'
+                    ? 'bg-accent text-accent-contrast shadow-sm ring-2 ring-focus-ring/25'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-elevated'
+                }`}
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+                <span>Dashboard</span>
+              </button>
+
+              {/* 2. Create Quote Tab */}
               <button
                 onClick={() => setView('new-quote')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-semibold transition-all shrink-0 ${
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 cursor-pointer ${
                   currentView === 'new-quote'
-                    ? 'bg-[#3D6353] text-white shadow-sm ring-2 ring-[#3D6353]/20'
-                    : 'text-[#4A5450] hover:text-[#2C5040] hover:bg-[#EEF5F1]'
+                    ? 'bg-accent text-accent-contrast shadow-sm ring-2 ring-focus-ring/25'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-elevated'
                 }`}
               >
-                <Calculator className="w-4 h-4" />
-                <span>Costing Sheet</span>
+                <Plus className="w-3.5 h-3.5" />
+                <span>Create Quote</span>
               </button>
 
+              {/* 3. Quotes List Tab */}
               <button
                 onClick={() => setView('quotes')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-semibold transition-all shrink-0 ${
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 relative cursor-pointer ${
                   currentView === 'quotes'
-                    ? 'bg-[#3D6353] text-white shadow-sm ring-2 ring-[#3D6353]/20'
-                    : 'text-[#4A5450] hover:text-[#2C5040] hover:bg-[#EEF5F1]'
+                    ? 'bg-accent text-accent-contrast shadow-sm ring-2 ring-focus-ring/25'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-elevated'
                 }`}
               >
-                <FileText className="w-4 h-4" />
-                <span>Saved Quotes</span>
+                <FileText className="w-3.5 h-3.5" />
+                <span>{isAdmin ? 'All Quotes & Approvals' : 'My Quotes'}</span>
+                {pendingCount > 0 && isAdmin && (
+                  <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-black bg-warning text-base font-bold animate-pulse">
+                    {pendingCount}
+                  </span>
+                )}
               </button>
 
-              <button
-                onClick={() => setView('rates')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-semibold transition-all shrink-0 ${
-                  currentView === 'rates'
-                    ? 'bg-[#3D6353] text-white shadow-sm ring-2 ring-[#3D6353]/20'
-                    : 'text-[#4A5450] hover:text-[#2C5040] hover:bg-[#EEF5F1]'
-                }`}
-              >
-                <SlidersHorizontal className="w-4 h-4" />
-                <span className="hidden sm:inline">Rates & What-If</span>
-                <span className="sm:hidden">Rates</span>
-              </button>
+              {/* 4. Rates & Cost Master (Admin Only) */}
+              {isAdmin && (
+                <button
+                  onClick={() => setView('rates')}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 cursor-pointer ${
+                    currentView === 'rates'
+                      ? 'bg-accent text-accent-contrast shadow-sm ring-2 ring-focus-ring/25'
+                      : 'text-text-secondary hover:text-text-primary hover:bg-elevated'
+                  }`}
+                  title="Master Rates & Costing: Set raw material ₹/kg, bought-outs, and margin rules"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  <span>Cost & Rates Master</span>
+                </button>
+              )}
 
-              <button
-                onClick={() => setView('company-settings')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-semibold transition-all shrink-0 ${
-                  currentView === 'company-settings'
-                    ? 'bg-[#3D6353] text-white shadow-sm ring-2 ring-[#3D6353]/20'
-                    : 'text-[#4A5450] hover:text-[#2C5040] hover:bg-[#EEF5F1]'
-                }`}
-              >
-                <Settings className="w-4 h-4" />
-                <span className="hidden sm:inline">Company Settings</span>
-                <span className="sm:hidden">Settings</span>
-              </button>
-
-              <button
-                onClick={() => setView('damper-admin')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-semibold transition-all shrink-0 ${
-                  currentView === 'damper-admin'
-                    ? 'bg-[#3D6353] text-white shadow-sm ring-2 ring-[#3D6353]/20'
-                    : 'text-[#4A5450] hover:text-[#2C5040] hover:bg-[#EEF5F1]'
-                }`}
-              >
-                <Ruler className="w-4 h-4" />
-                <span>Damper Admin</span>
-              </button>
             </nav>
 
-            {/* Quick Engine Status Indicator */}
-            <div className="hidden lg:flex items-center gap-2 text-xs text-[#5C6460] font-medium bg-[#F5F2EB] px-3 py-1.5 rounded-full border border-[#E8E2D7]">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span>Pune CTO Pricing v2.4 Active</span>
+            {/* Right Side: User Session + Logout */}
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Role Pill */}
+              <div className="hidden sm:flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-semibold shadow-xs bg-elevated text-text-primary border-border-subtle">
+                {isAdmin ? (
+                  <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-success" />
+                ) : (
+                  <User className="w-3.5 h-3.5 shrink-0 text-info" />
+                )}
+                <div className="flex flex-col leading-tight">
+                  <span className="font-extrabold text-[11px] truncate max-w-[120px]">
+                    {isAdmin ? 'Plant Admin' : 'Quotation Member'}
+                  </span>
+                  <span className="text-[9px] text-text-muted font-normal truncate max-w-[120px]">
+                    {user?.email || user?.full_name}
+                  </span>
+                </div>
+              </div>
+
+              {/* Switch User / Logout Button */}
+              <button
+                onClick={onSwitchUser || onLogout}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-all shadow-xs cursor-pointer active:scale-95 bg-elevated hover:bg-surface text-text-primary border-border-subtle"
+                title="Switch role or logout"
+              >
+                <ArrowRightLeft className="w-3 h-3 text-accent-text" />
+                <span className="hidden sm:inline">Logout</span>
+                <span className="sm:hidden"><LogOut className="w-3 h-3 text-error" /></span>
+              </button>
+
             </div>
+
           </div>
         </div>
       </header>

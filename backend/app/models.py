@@ -63,6 +63,7 @@ class RatesVersion(Base):
     finishing_rate_per_kg = Column(Float, default=20.0)
     default_markup_pct = Column(Float, default=10.0)
     multi_blade_rates = Column(JSON, nullable=True)
+    part_rates = Column(JSON, nullable=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     min_approval_value = Column(Float, nullable=True)
@@ -121,7 +122,7 @@ class Quote(Base):
     margin_pct = Column(Float, default=0.0)
     quoted_price = Column(Float, nullable=False)
     
-    status = Column(String, default="Draft") # Draft, Sent, Won, Lost
+    status = Column(String, default="Draft") # Draft, Pending approval, Approved, Sent, Won, Lost
     rate_version_id = Column(Integer, ForeignKey("rates_versions.id"), nullable=False)
     revision_number = Column(Integer, default=1)
     is_scaled = Column(Boolean, default=False)
@@ -135,6 +136,11 @@ class Quote(Base):
     accuracy_label = Column(String, nullable=True)
     estimation_verified = Column(Boolean, default=False)
     approved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approval_comment = Column(Text, nullable=True)
+    discount_pct = Column(Float, default=0.0)
+    rfq_received_at = Column(DateTime, default=datetime.datetime.utcnow)
+    approved_at = Column(DateTime, nullable=True)
+    sent_at = Column(DateTime, nullable=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
@@ -201,6 +207,11 @@ class CompanySettings(Base):
     payment_terms = Column(Text, default="30% advance with Purchase Order; 70% against proforma invoice prior to dispatch.")
     delivery_terms = Column(Text, default="8 to 10 weeks from the date of technically and commercially clear order & drawing approval.")
     warranty_terms = Column(Text, default="18 months from date of supply or 12 months from date of commissioning, whichever is earlier.")
+    approval_threshold_value = Column(Float, default=2500000.0)
+    approval_min_margin_pct = Column(Float, default=12.0)
+    approval_max_discount_pct = Column(Float, default=10.0)
+    stale_rate_days_limit = Column(Integer, default=30)
+    manual_baseline_hours_per_quote = Column(Float, default=4.0)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 class Approval(Base):

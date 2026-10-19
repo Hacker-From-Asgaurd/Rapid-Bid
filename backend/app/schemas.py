@@ -92,6 +92,12 @@ class QuoteUpdateRequest(BaseModel):
 
 class QuoteStatusUpdate(BaseModel):
     status: str
+    comment: Optional[str] = None
+    confirm_stale: Optional[bool] = False
+
+class RFQParseRequest(BaseModel):
+    text: str
+
 
 # --- Rates Schemas ---
 class RatesUpdateRequest(BaseModel):
@@ -103,6 +109,7 @@ class RatesUpdateRequest(BaseModel):
     fabrication_rate_per_kg: float = Field(..., ge=0.0)
     finishing_rate_per_kg: float = Field(..., ge=0.0)
     default_markup_pct: float = Field(..., ge=0.0)
+    part_rates: Optional[Dict[str, Any]] = None
 
 class WhatIfRequest(BaseModel):
     width_mm: float = 3000.0

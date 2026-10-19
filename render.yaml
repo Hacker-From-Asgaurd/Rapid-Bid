@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: rapid-bid-backend
+    env: docker
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    plan: free
+    envVars:
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: DATABASE_URL
+        value: sqlite:///./damper_quote_pro.db
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: SECRET_KEY
+        generateValue: true

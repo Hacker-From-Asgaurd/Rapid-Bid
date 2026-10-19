@@ -1,38 +1,45 @@
 import React, { useState, useEffect } from 'react';
-import { Building2, Save, CheckCircle2, AlertCircle, FileText, ShieldAlert } from 'lucide-react';
-import { companySettingsApi } from '../services/api';
+import { quotesApi } from '../services/api';
+import { Building2, Save, FileText, CheckCircle2, AlertCircle, ShieldAlert } from 'lucide-react';
 
 export default function CompanySettings({ user }) {
   const [settings, setSettings] = useState({
     company_name: '',
     address: '',
     gstin: '',
+    quote_validity_days: 30,
     email: '',
     phone: '',
-    logo_url: '',
-    quote_validity_days: 30,
     payment_terms: '',
     delivery_terms: '',
-    warranty_terms: ''
+    warranty_terms: '',
+    approval_threshold_value: 500000,
+    approval_min_margin_pct: 15.0,
+    stale_rate_days_limit: 30,
+    manual_baseline_hours_per_quote: 4.0,
+    logo_url: ''
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
 
-  const canEdit = user?.role === 'Admin' || user?.role === 'Manager';
+  const isAdmin = user?.role === 'Admin' || user?.role === 'Manager' || user?.role === 'Manager/Approver';
 
   useEffect(() => {
-    loadSettings();
+    fetchSettings();
   }, []);
 
-  const loadSettings = async () => {
+  const fetchSettings = async () => {
     try {
       setLoading(true);
-      const data = await companySettingsApi.getSettings();
-      setSettings(data);
+      const data = await quotesApi.getCompanySettings();
+      if (data) {
+        setSettings(data);
+      }
     } catch (err) {
-      setError('Failed to load company settings.');
+      console.error('Failed to load company settings:', err);
+      setError('Could not load company settings. Using defaults.');
     } finally {
       setLoading(false);
     }
@@ -40,27 +47,26 @@ export default function CompanySettings({ user }) {
 
   const handleSave = async (e) => {
     e.preventDefault();
-    if (!canEdit) return;
     try {
       setSaving(true);
       setError('');
-      const updated = await companySettingsApi.updateSettings(settings);
-      setSettings(updated);
+      await quotesApi.updateCompanySettings(settings);
       setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      setTimeout(() => setSaved(false), 4000);
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to update company settings.');
+      console.error('Failed to update company settings:', err);
+      setError(err.response?.data?.detail || 'Failed to save settings.');
     } finally {
       setSaving(false);
     }
   };
 
-  if (!canEdit) {
+  if (!isAdmin) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-16 text-center">
-        <ShieldAlert className="w-12 h-12 text-rose-500 mx-auto mb-3" />
-        <h2 className="text-xl font-bold text-slate-900 dark:text-white">Access Denied</h2>
-        <p className="text-sm text-slate-500 mt-1">
+        <ShieldAlert className="w-12 h-12 text-error mx-auto mb-3" />
+        <h2 className="text-xl font-bold text-text-primary">Access Denied</h2>
+        <p className="text-sm text-text-secondary mt-1">
           Only Admin and Manager roles have permission to view or edit company commercial profile settings.
         </p>
       </div>
@@ -70,24 +76,24 @@ export default function CompanySettings({ user }) {
   if (loading) {
     return (
       <div className="max-w-5xl mx-auto px-4 py-12 flex justify-center">
-        <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        <div className="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-border-subtle pb-4">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
+            <h1 className="text-2xl font-bold text-text-primary">
               Company Profile & Quotation Terms
             </h1>
-            <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">
+            <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-tint-sky text-info border border-border-subtle">
               PDF Source of Truth
             </span>
           </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+          <p className="text-xs text-text-secondary mt-1">
             These legal and commercial terms automatically feed all customer quotation PDFs generated by the system.
           </p>
         </div>
@@ -95,7 +101,7 @@ export default function CompanySettings({ user }) {
         <button
           onClick={handleSave}
           disabled={saving}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold px-5 py-2.5 rounded-xl text-xs shadow-md shadow-blue-600/25 transition-all disabled:opacity-50"
+          className="flex items-center gap-2 bg-accent hover:bg-accent-hover text-accent-contrast font-semibold px-5 py-2.5 rounded-xl text-xs shadow-md transition-all disabled:opacity-50 cursor-pointer"
         >
           {saving ? (
             <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -109,62 +115,62 @@ export default function CompanySettings({ user }) {
       </div>
 
       {saved && (
-        <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 flex items-center gap-3 text-emerald-800 dark:text-emerald-200 text-xs font-semibold">
-          <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+        <div className="p-4 rounded-xl bg-success-bg border border-success flex items-center gap-3 text-success text-xs font-semibold">
+          <CheckCircle2 className="w-5 h-5 text-success shrink-0" />
           <span>Company profile and PDF commercial terms updated successfully!</span>
         </div>
       )}
 
       {error && (
-        <div className="p-4 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 flex items-center gap-3 text-rose-800 dark:text-rose-200 text-xs font-semibold">
-          <AlertCircle className="w-5 h-5 text-rose-500 shrink-0" />
+        <div className="p-4 rounded-xl bg-error-bg border border-error flex items-center gap-3 text-error text-xs font-semibold">
+          <AlertCircle className="w-5 h-5 text-error shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
       <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
         {/* Left Column: Organization Details */}
-        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm space-y-4">
-          <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
-            <Building2 className="w-4 h-4 text-blue-500" />
+        <div className="bg-surface rounded-xl border border-border-subtle p-5 shadow-sm space-y-4">
+          <h3 className="font-bold text-sm text-text-primary flex items-center gap-2 border-b border-border-subtle pb-2">
+            <Building2 className="w-4 h-4 text-accent-text" />
             <span>Manufacturing Organization</span>
           </h3>
 
           <div>
-            <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">Company Legal Name</label>
+            <label className="block text-text-secondary font-medium mb-1">Company Legal Name</label>
             <input
               type="text"
               required
               value={settings.company_name}
               onChange={(e) => setSettings({ ...settings, company_name: e.target.value })}
-              className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
+              className="w-full p-2.5 rounded-lg border border-border-subtle bg-surface text-text-primary font-medium focus:outline-none focus:ring-2 focus:ring-focus-ring"
             />
           </div>
 
           <div>
-            <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">Factory & Works Address</label>
+            <label className="block text-text-secondary font-medium mb-1">Factory & Works Address</label>
             <textarea
               rows="3"
               required
               value={settings.address}
               onChange={(e) => setSettings({ ...settings, address: e.target.value })}
-              className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+              className="w-full p-2.5 rounded-lg border border-border-subtle bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-focus-ring"
             />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">GSTIN Identification</label>
+              <label className="block text-text-secondary font-medium mb-1">GSTIN Identification</label>
               <input
                 type="text"
                 required
                 value={settings.gstin}
                 onChange={(e) => setSettings({ ...settings, gstin: e.target.value })}
-                className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono"
+                className="w-full p-2.5 rounded-lg border border-border-subtle bg-surface text-text-primary font-mono focus:outline-none focus:ring-2 focus:ring-focus-ring"
               />
             </div>
             <div>
-              <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">Quote Validity (Days)</label>
+              <label className="block text-text-secondary font-medium mb-1">Quote Validity (Days)</label>
               <input
                 type="number"
                 min="7"
@@ -172,77 +178,167 @@ export default function CompanySettings({ user }) {
                 required
                 value={settings.quote_validity_days}
                 onChange={(e) => setSettings({ ...settings, quote_validity_days: parseInt(e.target.value) || 30 })}
-                className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono"
+                className="w-full p-2.5 rounded-lg border border-border-subtle bg-surface text-text-primary font-mono focus:outline-none focus:ring-2 focus:ring-focus-ring"
               />
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">Official Email</label>
+              <label className="block text-text-secondary font-medium mb-1">Official Email</label>
               <input
                 type="email"
                 required
                 value={settings.email}
                 onChange={(e) => setSettings({ ...settings, email: e.target.value })}
-                className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                className="w-full p-2.5 rounded-lg border border-border-subtle bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-focus-ring"
               />
             </div>
             <div>
-              <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">Contact Phone</label>
+              <label className="block text-text-secondary font-medium mb-1">Contact Phone</label>
               <input
                 type="text"
                 required
                 value={settings.phone}
                 onChange={(e) => setSettings({ ...settings, phone: e.target.value })}
-                className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                className="w-full p-2.5 rounded-lg border border-border-subtle bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-focus-ring"
               />
             </div>
           </div>
         </div>
 
         {/* Right Column: Commercial & Legal Terms */}
-        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm space-y-4">
-          <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
-            <FileText className="w-4 h-4 text-emerald-500" />
+        <div className="bg-surface rounded-xl border border-border-subtle p-5 shadow-sm space-y-4">
+          <h3 className="font-bold text-sm text-text-primary flex items-center gap-2 border-b border-border-subtle pb-2">
+            <FileText className="w-4 h-4 text-success" />
             <span>Commercial Terms (PDF Clause Feed)</span>
           </h3>
 
           <div>
-            <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">Payment Terms</label>
+            <label className="block text-text-secondary font-medium mb-1">Payment Terms</label>
             <textarea
               rows="2"
               required
               value={settings.payment_terms}
               onChange={(e) => setSettings({ ...settings, payment_terms: e.target.value })}
-              className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+              className="w-full p-2.5 rounded-lg border border-border-subtle bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-focus-ring"
             />
           </div>
 
           <div>
-            <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">Delivery Schedule</label>
+            <label className="block text-text-secondary font-medium mb-1">Delivery Schedule</label>
             <textarea
               rows="2"
               required
               value={settings.delivery_terms}
               onChange={(e) => setSettings({ ...settings, delivery_terms: e.target.value })}
-              className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+              className="w-full p-2.5 rounded-lg border border-border-subtle bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-focus-ring"
             />
           </div>
 
           <div>
-            <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">Warranty Period & Terms</label>
+            <label className="block text-text-secondary font-medium mb-1">Warranty Period & Terms</label>
             <textarea
               rows="2"
               required
               value={settings.warranty_terms}
               onChange={(e) => setSettings({ ...settings, warranty_terms: e.target.value })}
-              className="w-full p-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+              className="w-full p-2.5 rounded-lg border border-border-subtle bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-focus-ring"
             />
           </div>
 
-          <div className="pt-2 text-[11px] text-slate-400">
+          <div className="pt-2 text-[11px] text-text-muted">
             Note: All generated quotation PDFs automatically append 18% GST and Ex-works Pune shipping basis per standard valve manufacturer conventions.
+          </div>
+        </div>
+
+        {/* Full Width: Governance, Rate Guard & Impact Baselines */}
+        <div className="md:col-span-2 bg-surface rounded-xl border border-border-subtle p-5 shadow-sm space-y-4">
+          <h3 className="font-bold text-sm text-text-primary flex items-center gap-2 border-b border-border-subtle pb-2">
+            <ShieldAlert className="w-4 h-4 text-warning" />
+            <span>Governance & Rate Freshness Controls</span>
+          </h3>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-text-secondary font-medium mb-1">
+                Approval Threshold (Quote Value Rs)
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="50000"
+                value={settings.approval_threshold_value ?? 500000}
+                onChange={(e) => setSettings({ ...settings, approval_threshold_value: parseFloat(e.target.value) || 0 })}
+                className="w-full p-2.5 rounded-lg border border-border-subtle bg-surface text-text-primary font-mono focus:outline-none focus:ring-2 focus:ring-focus-ring"
+              />
+              <span className="text-[10px] text-text-muted">Quotes above this require manager sign-off</span>
+            </div>
+
+            <div>
+              <label className="block text-text-secondary font-medium mb-1">
+                Min Acceptable Margin (%)
+              </label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.5"
+                value={settings.approval_min_margin_pct ?? 15.0}
+                onChange={(e) => setSettings({ ...settings, approval_min_margin_pct: parseFloat(e.target.value) || 0 })}
+                className="w-full p-2.5 rounded-lg border border-border-subtle bg-surface text-text-primary font-mono focus:outline-none focus:ring-2 focus:ring-focus-ring"
+              />
+              <span className="text-[10px] text-text-muted">Quotes below this trigger low-margin alert</span>
+            </div>
+
+            <div>
+              <label className="block text-text-secondary font-medium mb-1">
+                Rate Freshness Stale Limit (Days)
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="365"
+                value={settings.stale_rate_days_limit ?? 30}
+                onChange={(e) => setSettings({ ...settings, stale_rate_days_limit: parseInt(e.target.value) || 30 })}
+                className="w-full p-2.5 rounded-lg border border-border-subtle bg-surface text-text-primary font-mono focus:outline-none focus:ring-2 focus:ring-focus-ring"
+              />
+              <span className="text-[10px] text-text-muted">Warns sales rep before sending if steel rates older than this</span>
+            </div>
+
+            <div>
+              <label className="block text-text-secondary font-medium mb-1">
+                Baseline Manual Hours / Quote
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.5"
+                value={settings.manual_baseline_hours_per_quote ?? 4.0}
+                onChange={(e) => setSettings({ ...settings, manual_baseline_hours_per_quote: parseFloat(e.target.value) || 0 })}
+                className="w-full p-2.5 rounded-lg border border-border-subtle bg-surface text-text-primary font-mono focus:outline-none focus:ring-2 focus:ring-focus-ring"
+              />
+              <span className="text-[10px] text-text-muted">Used on Impact page to compute engineering hours saved</span>
+            </div>
+          </div>
+
+          <div className="pt-3 border-t border-border-subtle flex items-center justify-between">
+            <div>
+              <div className="font-semibold text-text-primary">Company Logo Placeholder</div>
+              <div className="text-[11px] text-text-muted">Custom logo prints on top-right of both Customer Quotation & Cost Sheet PDFs</div>
+            </div>
+            <div className="flex items-center gap-3">
+              <input
+                type="text"
+                placeholder="Logo URL (optional)"
+                value={settings.logo_url || ''}
+                onChange={(e) => setSettings({ ...settings, logo_url: e.target.value })}
+                className="p-2 text-xs rounded-lg border border-border-subtle bg-surface text-text-primary w-64 focus:outline-none focus:ring-2 focus:ring-focus-ring"
+              />
+              <div className="h-10 px-4 rounded-lg border-2 border-dashed border-border-strong flex items-center justify-center text-[11px] font-bold text-text-secondary uppercase tracking-wider bg-elevated">
+                {settings.company_name ? settings.company_name.slice(0, 12) : 'RAPID BID'} LOGO
+              </div>
+            </div>
           </div>
         </div>
       </form>

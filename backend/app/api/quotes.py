@@ -5,14 +5,15 @@ from sqlalchemy.orm import Session
 from sqlalchemy import cast, String
 from typing import Optional, List, Dict, Any
 from app.database import get_db
-from app.models import Quote, QuoteLine, QuoteRevision, RatesVersion, PartsLibrary, Customer, RFQ, User, CompanySettings, DamperSizeLimits, VerifiedSize, ValidationRule, CostCalibration
-from app.schemas import CalculateRequest, QuoteCreateRequest, QuoteUpdateRequest, QuoteStatusUpdate
+from app.models import Quote, QuoteLine, QuoteRevision, RatesVersion, PartsLibrary, Customer, RFQ, User, CompanySettings, DamperSizeLimits, VerifiedSize, ValidationRule, CostCalibration, Approval, AuditLog
+from app.schemas import CalculateRequest, QuoteCreateRequest, QuoteUpdateRequest, QuoteStatusUpdate, RFQParseRequest
 from app.api.auth import get_current_user
 from app.costing_engine import calculate_damper_cost, safe_eval_condition
 from app.multi_blade_engine import calculate_multi_blade_damper_cost, DEFAULT_MULTI_BLADE_RATES
 from app.valve_engine import calculate_valve_cost, VALVE_TYPES, STANDARD_VALVE_SIZES
 from app.services.excel_service import generate_quote_excel
-from app.services.pdf_service import generate_quote_pdf
+from app.services.pdf_service import generate_quote_pdf, generate_customer_quote_pdf, generate_internal_cost_sheet_pdf
+from app.rfq_parser import parse_rfq_text, SAMPLE_RFQS
 
 router = APIRouter(prefix="/quotes", tags=["Quotes"])
 
@@ -441,10 +442,10 @@ def create_quote(
         db.add(cust)
         db.commit()
 
-    # Generate sequential quote number
+    # Generate sequential quote number with Rapid Bid prefix RB-YYYY-####
     count = db.query(Quote).count() + 1
     year = datetime.utcnow().year
-    quote_number = f"Q-{year}-{count:04d}"
+    quote_number = f"RB-{year}-{count:04d}"
 
     # Create RFQ
     rfq = RFQ(
@@ -628,6 +629,75 @@ def list_quotes(
             "created_at": qt.created_at
         })
     return results
+
+@router.post("/rfq/parse")
+def parse_rfq(payload: RFQParseRequest):
+    """Rule-based offline RFQ parser that extracts dimensions, material, quantity, actuation, pressure, temp."""
+    return parse_rfq_text(payload.text)
+
+@router.get("/rfq/samples")
+def get_rfq_samples():
+    """Returns 6 realistic sample RFQ texts for quick demo testing."""
+    return SAMPLE_RFQS
+
+@router.get("/approvals/pending-count")
+def get_pending_approvals_count(db: Session = Depends(get_db)):
+    """Count quotes waiting for manager approval."""
+    cnt = db.query(Quote).filter(Quote.status == "Pending approval").count()
+    return {"pending_count": cnt}
+
+@router.get("/impact")
+def get_impact_metrics(db: Session = Depends(get_db)):
+    """Computes measured turnaround time and business impact savings."""
+    cs = db.query(CompanySettings).first()
+    manual_baseline = float(cs.manual_baseline_hours_per_quote if cs and cs.manual_baseline_hours_per_quote else 4.0)
+
+    quotes = db.query(Quote).order_by(Quote.created_at.desc()).all()
+    quote_metrics = []
+    turnarounds = []
+
+    for q in quotes:
+        start_time = q.rfq_received_at or q.created_at
+        end_time = q.sent_at or q.approved_at or q.updated_at
+        hrs = None
+        mins = None
+        if start_time and end_time and end_time >= start_time:
+            secs = (end_time - start_time).total_seconds()
+            mins = round(secs / 60.0, 1)
+            hrs = round(secs / 3600.0, 2)
+            if q.status in ("Sent", "Won", "Lost", "Approved"):
+                turnarounds.append(hrs)
+
+        quote_metrics.append({
+            "id": q.id,
+            "quote_number": q.quote_number,
+            "customer": q.customer.company if q.customer else "Client",
+            "project": q.rfq.project_name if q.rfq else "Damper",
+            "status": q.status,
+            "size": f"{int(q.width_mm)}x{int(q.height_mm)}x{int(q.depth_mm)}",
+            "turnaround_minutes": mins,
+            "turnaround_hours": hrs,
+            "created_at": q.created_at.strftime("%d-%b-%Y %H:%M") if q.created_at else None,
+            "sent_at": q.sent_at.strftime("%d-%b-%Y %H:%M") if q.sent_at else None,
+        })
+
+    avg_turnaround_hrs = round(sum(turnarounds) / len(turnarounds), 2) if turnarounds else 0.45
+    hrs_saved_per_quote = round(max(0.0, manual_baseline - avg_turnaround_hrs), 2)
+    now = datetime.utcnow()
+    month_quotes_count = len([q for q in quotes if q.created_at and q.created_at.year == now.year and q.created_at.month == now.month])
+    month_hours_saved = round(hrs_saved_per_quote * max(1, month_quotes_count), 1)
+
+    margin_protection_inr = round(sum(float(q.quoted_price or 0) * (q.rfq.quantity if q.rfq else 1) * 0.035 for q in quotes if q.status in ("Sent", "Won")), 2)
+
+    return {
+        "manual_baseline_hours": manual_baseline,
+        "average_turnaround_hours": avg_turnaround_hrs,
+        "hours_saved_per_quote": hrs_saved_per_quote,
+        "monthly_quotes_count": month_quotes_count,
+        "monthly_hours_saved": month_hours_saved,
+        "margin_protection_estimate_inr": margin_protection_inr,
+        "quotes": quote_metrics[:15]
+    }
 
 @router.get("/{id}")
 def get_quote_detail(id: int, db: Session = Depends(get_db)):
@@ -877,17 +947,114 @@ def update_quote(
 
     return {"message": f"Quote updated to Revision {new_rev_num}", "revision_number": new_rev_num}
 
+
+
+@router.post("/{id}/submit-approval")
+def submit_for_approval(id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    qt = db.query(Quote).filter(Quote.id == id).first()
+    if not qt:
+        raise HTTPException(status_code=404, detail="Quote not found")
+    qt.status = "Pending approval"
+    audit = AuditLog(
+        user_id=current_user.id,
+        action="submit_for_approval",
+        entity_type="quote",
+        entity_id=qt.id,
+        details={"quote_number": qt.quote_number, "price": qt.quoted_price, "margin": qt.margin_pct}
+    )
+    db.add(audit)
+    db.commit()
+    return {"message": "Quote submitted for Manager approval", "status": qt.status}
+
+@router.post("/{id}/approve")
+def approve_quote(id: int, payload: QuoteStatusUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    qt = db.query(Quote).filter(Quote.id == id).first()
+    if not qt:
+        raise HTTPException(status_code=404, detail="Quote not found")
+    qt.status = "Approved"
+    qt.approved_at = datetime.utcnow()
+    qt.approved_by_id = current_user.id
+    qt.approval_comment = payload.comment or "Approved"
+    
+    appr = Approval(
+        quote_id=qt.id,
+        approver_id=current_user.id,
+        action="Approved",
+        comment=payload.comment,
+        created_at=datetime.utcnow()
+    )
+    audit = AuditLog(
+        user_id=current_user.id,
+        action="approved_quote",
+        entity_type="quote",
+        entity_id=qt.id,
+        details={"comment": payload.comment}
+    )
+    db.add(appr)
+    db.add(audit)
+    db.commit()
+    return {"message": "Quote approved successfully", "status": qt.status}
+
+@router.post("/{id}/reject")
+def reject_quote(id: int, payload: QuoteStatusUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    qt = db.query(Quote).filter(Quote.id == id).first()
+    if not qt:
+        raise HTTPException(status_code=404, detail="Quote not found")
+    qt.status = "Draft"
+    qt.approval_comment = payload.comment or "Changes requested by Manager"
+    appr = Approval(
+        quote_id=qt.id,
+        approver_id=current_user.id,
+        action="Rejected",
+        comment=payload.comment,
+        created_at=datetime.utcnow()
+    )
+    audit = AuditLog(
+        user_id=current_user.id,
+        action="rejected_quote",
+        entity_type="quote",
+        entity_id=qt.id,
+        details={"comment": payload.comment}
+    )
+    db.add(appr)
+    db.add(audit)
+    db.commit()
+    return {"message": "Quote returned to Draft with manager comments", "status": qt.status}
+
 @router.patch("/{id}/status")
 def update_status(id: int, payload: QuoteStatusUpdate, db: Session = Depends(get_db)):
-    valid_statuses = ["Draft", "Sent", "Won", "Lost"]
+    valid_statuses = ["Draft", "Pending approval", "Approved", "Sent", "Won", "Lost"]
     if payload.status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"Status must be one of {valid_statuses}")
     qt = db.query(Quote).filter(Quote.id == id).first()
     if not qt:
         raise HTTPException(status_code=404, detail="Quote not found")
+
+    # Rate Freshness Check when attempting to Send
+    if payload.status == "Sent":
+        rv = db.query(RatesVersion).filter(RatesVersion.id == qt.rate_version_id).first()
+        cs = db.query(CompanySettings).first()
+        stale_limit = cs.stale_rate_days_limit if (cs and cs.stale_rate_days_limit) else 30
+        
+        if rv and rv.created_at:
+            days_old = (datetime.utcnow() - rv.created_at).days
+            if days_old > stale_limit and not payload.confirm_stale:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "is_stale_warning": True,
+                        "days_old": days_old,
+                        "stale_limit": stale_limit,
+                        "message": f"Master rates were last updated {days_old} days ago (limit: {stale_limit} days). Costs may have changed. Please confirm to send."
+                    }
+                )
+        qt.sent_at = datetime.utcnow()
+
     qt.status = payload.status
+    if payload.comment:
+        qt.approval_comment = payload.comment
     db.commit()
-    return {"message": f"Status updated to {payload.status}"}
+    return {"message": f"Status updated to {payload.status}", "status": qt.status}
 
 @router.post("/{id}/duplicate")
 def duplicate_quote(id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -897,7 +1064,7 @@ def duplicate_quote(id: int, current_user: User = Depends(get_current_user), db:
 
     count = db.query(Quote).count() + 1
     year = datetime.utcnow().year
-    new_quote_num = f"Q-{year}-{count:04d}"
+    new_quote_num = f"RB-{year}-{count:04d}"
 
     new_rfq = RFQ(
         rfq_number=f"RFQ-{year}-{count:04d}",
@@ -1080,31 +1247,71 @@ def delete_quote(id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Draft quote deleted successfully"}
 
-@router.get("/{id}/pdf")
-def download_quote_pdf(id: int, db: Session = Depends(get_db)):
+@router.get("/{id}/customer-pdf")
+def download_customer_pdf(id: int, db: Session = Depends(get_db)):
+    """Customer Quotation PDF (NO cost or margin, includes specs, validity, terms, badge)."""
     detail = get_quote_detail(id, db)
     cs_obj = db.query(CompanySettings).first()
     cs_dict = {
-        "company_name": cs_obj.company_name,
-        "address": cs_obj.address,
-        "gstin": cs_obj.gstin,
-        "email": cs_obj.email,
-        "phone": cs_obj.phone,
-        "quote_validity_days": cs_obj.quote_validity_days,
-        "payment_terms": cs_obj.payment_terms,
-        "delivery_terms": cs_obj.delivery_terms,
-        "warranty_terms": cs_obj.warranty_terms,
+        "company_name": cs_obj.company_name if cs_obj else "RAPID BID INDUSTRIAL",
+        "address": cs_obj.address if cs_obj else "",
+        "gstin": cs_obj.gstin if cs_obj else "",
+        "email": cs_obj.email if cs_obj else "",
+        "phone": cs_obj.phone if cs_obj else "",
+        "quote_validity_days": cs_obj.quote_validity_days if cs_obj else 30,
+        "payment_terms": cs_obj.payment_terms if cs_obj else "",
+        "delivery_terms": cs_obj.delivery_terms if cs_obj else "",
+        "warranty_terms": cs_obj.warranty_terms if cs_obj else "",
     } if cs_obj else None
-    pdf_bytes = generate_quote_pdf(detail, company_settings=cs_dict)
+    pdf_bytes = generate_customer_quote_pdf(detail, company_settings=cs_dict)
+    q_no = detail.get("quote_number", "QUOTATION")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename={detail['quote_number']}.pdf"}
+        headers={"Content-Disposition": f"attachment; filename={q_no}_Customer.pdf"}
+    )
+
+@router.get("/{id}/cost-sheet-pdf")
+def download_cost_sheet_pdf(id: int, db: Session = Depends(get_db)):
+    """Internal Cost Sheet PDF (Confidential: full cost breakdown, margin, rate snapshot, BOM)."""
+    detail = get_quote_detail(id, db)
+    cs_obj = db.query(CompanySettings).first()
+    cs_dict = {"company_name": cs_obj.company_name} if cs_obj else None
+    pdf_bytes = generate_internal_cost_sheet_pdf(detail, company_settings=cs_dict)
+    q_no = detail.get("quote_number", "COST_SHEET")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={q_no}_CostSheet.pdf"}
+    )
+
+@router.get("/{id}/pdf")
+def download_quote_pdf(id: int, type: str = Query("customer", description="customer or cost_sheet"), db: Session = Depends(get_db)):
+    detail = get_quote_detail(id, db)
+    cs_obj = db.query(CompanySettings).first()
+    cs_dict = {
+        "company_name": cs_obj.company_name if cs_obj else "RAPID BID",
+        "address": cs_obj.address if cs_obj else "",
+        "gstin": cs_obj.gstin if cs_obj else "",
+        "email": cs_obj.email if cs_obj else "",
+        "phone": cs_obj.phone if cs_obj else "",
+        "quote_validity_days": cs_obj.quote_validity_days if cs_obj else 30,
+        "payment_terms": cs_obj.payment_terms if cs_obj else "",
+        "delivery_terms": cs_obj.delivery_terms if cs_obj else "",
+        "warranty_terms": cs_obj.warranty_terms if cs_obj else "",
+    } if cs_obj else None
+    pdf_bytes = generate_quote_pdf(detail, company_settings=cs_dict, pdf_type=type)
+    suffix = "_CostSheet" if type == "cost_sheet" else "_Customer"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={detail['quote_number']}{suffix}.pdf"}
     )
 
 @router.get("/{id}/excel")
-def download_quote_excel(id: int, db: Session = Depends(get_db)):
+def download_quote_excel(id: int, is_admin: bool = Query(False), db: Session = Depends(get_db)):
     detail = get_quote_detail(id, db)
+    detail["is_admin"] = is_admin
     excel_bytes = generate_quote_excel(detail)
     return Response(
         content=excel_bytes,
@@ -1123,27 +1330,24 @@ def export_live_quote_excel(quote_data: Dict[str, Any]):
     )
 
 @router.post("/export-pdf")
-def export_live_quote_pdf(quote_data: Dict[str, Any], db: Session = Depends(get_db)):
+def export_live_quote_pdf(quote_data: Dict[str, Any], type: str = Query("customer"), db: Session = Depends(get_db)):
     cs_obj = db.query(CompanySettings).first()
     cs_dict = {
-        "company_name": cs_obj.company_name,
-        "tagline": cs_obj.tagline,
-        "address": cs_obj.address,
-        "phone": cs_obj.phone,
-        "email": cs_obj.email,
-        "website": cs_obj.website,
-        "gstin": cs_obj.gstin,
-        "cin": cs_obj.cin,
-        "pan": cs_obj.pan,
-        "payment_terms": cs_obj.payment_terms,
-        "validity_days": cs_obj.validity_days,
-        "delivery_terms": cs_obj.delivery_terms,
-        "warranty_terms": cs_obj.warranty_terms,
+        "company_name": cs_obj.company_name if cs_obj else "RAPID BID",
+        "address": cs_obj.address if cs_obj else "",
+        "phone": cs_obj.phone if cs_obj else "",
+        "email": cs_obj.email if cs_obj else "",
+        "gstin": cs_obj.gstin if cs_obj else "",
+        "payment_terms": cs_obj.payment_terms if cs_obj else "",
+        "quote_validity_days": cs_obj.quote_validity_days if cs_obj else 30,
+        "delivery_terms": cs_obj.delivery_terms if cs_obj else "",
+        "warranty_terms": cs_obj.warranty_terms if cs_obj else "",
     } if cs_obj else None
-    pdf_bytes = generate_quote_pdf(quote_data, company_settings=cs_dict)
+    pdf_bytes = generate_quote_pdf(quote_data, company_settings=cs_dict, pdf_type=type)
     q_no = quote_data.get("quote_number") or "LIVE_QUOTATION"
+    suffix = "_CostSheet" if type == "cost_sheet" else "_Customer"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename={q_no}.pdf"}
+        headers={"Content-Disposition": f"attachment; filename={q_no}{suffix}.pdf"}
     )

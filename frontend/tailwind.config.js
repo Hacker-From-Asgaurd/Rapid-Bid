@@ -4,7 +4,6 @@ export default {
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
-  darkMode: 'class',
   theme: {
     extend: {
       fontFamily: {
@@ -50,6 +49,47 @@ export default {
           charcoal: '#242826',
           muted: '#5C6460',
           border: '#E8E3D8',
+        },
+        // Semantic Theme Tokens (Mapped to CSS Variables)
+        base: 'var(--bg-base)',
+        surface: 'var(--bg-surface)',
+        elevated: 'var(--bg-elevated)',
+        'border-subtle': 'var(--border-subtle)',
+        'border-strong': 'var(--border-strong)',
+        'text-primary': 'var(--text-primary)',
+        'text-secondary': 'var(--text-secondary)',
+        'text-muted': 'var(--text-muted)',
+        primary: 'var(--text-primary)',
+        secondary: 'var(--text-secondary)',
+        muted: 'var(--text-muted)',
+        accent: {
+          DEFAULT: 'var(--accent)',
+          hover: 'var(--accent-hover)',
+          contrast: 'var(--accent-contrast)',
+          text: 'var(--accent-text)',
+        },
+        'focus-ring': 'var(--focus-ring)',
+        success: {
+          DEFAULT: 'var(--success)',
+          bg: 'var(--success-bg)',
+        },
+        warning: {
+          DEFAULT: 'var(--warning)',
+          bg: 'var(--warning-bg)',
+        },
+        error: {
+          DEFAULT: 'var(--error)',
+          bg: 'var(--error-bg)',
+        },
+        info: {
+          DEFAULT: 'var(--info)',
+          bg: 'var(--info-bg)',
+        },
+        tint: {
+          lavender: 'var(--tint-lavender)',
+          mint: 'var(--tint-mint)',
+          peach: 'var(--tint-peach)',
+          sky: 'var(--tint-sky)',
         },
         brand: {
           50: '#EEF5F1',

@@ -15,16 +15,20 @@ import {
   Info,
   Layers,
   Clock,
-  ArrowRight
-  ,Plus,
-  Trash2
+  ArrowRight,
+  Plus,
+  Trash2,
+  Lock,
+  ShieldCheck,
+  ShieldAlert,
+  Link2
 } from 'lucide-react';
 import Damper3DViewer from '../components/Damper3DViewer';
 import FormulaInspector from '../components/FormulaInspector';
 import TwoDDesignAnalyzer from '../components/TwoDDesignAnalyzer';
 import initialCertifiedCostSheet from '../data/certified45Parts.json';
 import { DEFAULT_FORMULAS, evaluateFormula } from '../utils/formulaEvaluator';
-import { quotesApi, ratesApi } from '../services/api';
+import { quotesApi, ratesApi, companySettingsApi } from '../services/api';
 import apiClient from '../services/api';
 import { formatINR, formatNumber, formatWeight } from '../utils/formatters';
 
@@ -152,7 +156,83 @@ const STANDARD_VALVE_DNS = [
   { dn: 1200, inch: '48"' },
 ];
 
-export default function NewQuote({ setView, setSelectedQuoteId, user }) {
+export const CAD_PART_BOM_MAP = {
+  frame: {
+    key: 'frame',
+    name: 'Casing / Outer Housing Frame',
+    category: 'Structural Assembly',
+    badge: 'Channels, Plates & Stiffeners',
+    desc: 'Formed heavy-gauge channel frame (ISMC), housing side plates, top/bottom cover plates, and perimeter strength ribs designed to prevent duct buckling under aerodynamic pressure.',
+    bomSrNos: [1, 2, 3, 4, 5, 14, 15, 16, 17, 22, 23, 24],
+    color: '#3b82f6',
+  },
+  flanges: {
+    key: 'flanges',
+    name: 'Peripheral Duct Connection Flanges',
+    category: 'Flanged Interface',
+    badge: 'Flats & Lifting Lugs',
+    desc: 'Heavy-gauge perimeter mounting flats, drilled companion flanges, and engineered lifting lugs for secure rigging and bolted connection to plant ductwork.',
+    bomSrNos: [6, 7, 8, 35],
+    color: '#06b6d4',
+  },
+  blades: {
+    key: 'blades',
+    name: 'Sliding Gate Blade / Louver Blades Assembly',
+    category: 'Flow Regulating Trim',
+    badge: 'Primary Closure Element',
+    desc: 'Central flow modulation & isolation barrier. Built with heavy-duty skin plate, welded reinforcement channels, guide shoes, and stopper plates to ensure zero deflection.',
+    bomSrNos: [27, 28, 29, 30],
+    color: '#f89030',
+  },
+  shaft: {
+    key: 'shaft',
+    name: 'Drive Shafts, Pinion Spindles & Roller Pins',
+    category: 'Mechanical Transmission',
+    badge: 'Machined Shafting',
+    desc: 'Precision machined EN8 / SS drive shaft, pinion axle pins, and hardened guide roller shafts engineered to transfer operating torque without torsional twist.',
+    bomSrNos: [37, 39, 40, 42, 45],
+    color: '#8b5cf6',
+  },
+  linkage: {
+    key: 'linkage',
+    name: 'Dual Rack & Pinion Mechanism / Linkage Drive',
+    category: 'Drive Synchronization',
+    badge: 'Racks, Brackets & Rollers',
+    desc: 'Precision flame-cut or machine-cut gear racks, pinion mounting brackets, rack supports, guide rollers, and tie-rods providing synchronized motion without blade jamming.',
+    bomSrNos: [9, 10, 11, 12, 13, 18, 19, 20, 21, 31, 34, 36, 38, 41],
+    color: '#10b981',
+  },
+  actuator: {
+    key: 'actuator',
+    name: 'Actuator Rest & Motor Mounting Structure',
+    category: 'Actuation Interface',
+    badge: 'Mounting & Bearing Rests',
+    desc: 'Heavy formed actuator resting channels, bearing pedestal brackets, and gearbox interface pads ensuring rigid vibration-free actuator mounting.',
+    bomSrNos: [32, 33],
+    color: '#ef4444',
+  },
+  seals: {
+    key: 'seals',
+    name: 'Gas-Tight Sealing Blocks & Perimeter Flats',
+    category: 'Sealing Assembly',
+    badge: 'Leakage Prevention Strips',
+    desc: 'Precision machined sealing blocks, gland bushings, and landing seal flats ensuring 99.5%+ or zero-leakage flue gas isolation.',
+    bomSrNos: [25, 26, 43, 44],
+    color: '#ec4899',
+  },
+};
+
+export const getCadKeyFromSrNo = (srNo) => {
+  const num = Number(srNo);
+  for (const [key, item] of Object.entries(CAD_PART_BOM_MAP)) {
+    if (item.bomSrNos.includes(num)) return key;
+  }
+  return null;
+};
+
+export default function NewQuote({ setView, setSelectedQuoteId, user, rfqPrefill }) {
+  const isAdmin = user?.role === 'Admin' || user?.role === 'Manager' || user?.role === 'Manager/Approver';
+
   // Product Category Switcher (Top Corner)
   const [productCategory, setProductCategory] = useState('damper'); // 'damper' | 'valve'
 
@@ -178,6 +258,7 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
   const [designPressure, setDesignPressure] = useState('±500 mmWg');
   const [flangeType, setFlangeType] = useState('Both Ends Flanged (IS 2062)');
   const [show3DViewer, setShow3DViewer] = useState(true);
+  const [selectedCadPartKey, setSelectedCadPartKey] = useState(null);
 
   // Valve Specific Configuration States
   const [selectedValveTypeId, setSelectedValveTypeId] = useState('butterfly_valve');
@@ -298,6 +379,9 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(null);
+  const [companySettings, setCompanySettings] = useState(null);
+  const [ratesAgeDays, setRatesAgeDays] = useState(0);
+  const [proportionalNotice, setProportionalNotice] = useState(null);
 
   // Formula & Error / Tolerance Calibration States (Matching Reference Pages 5 & 6)
   const [densityMultiplier, setDensityMultiplier] = useState(7.85e-6);
@@ -360,11 +444,118 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
     setCustomFormulas(DEFAULT_FORMULAS);
   };
 
-  // Fetch initial calculation
+  // Fetch initial calculation, size limits, settings & prefill
   useEffect(() => {
     fetchInitialCalculation();
     apiClient.get('/admin/size-limits').then((res) => setSizeLimits(res.data)).catch((err) => console.error('Size limits load error:', err));
+    try {
+      companySettingsApi.getSettings?.().then((s) => setCompanySettings(s)).catch(() => {});
+    } catch (e) {}
+    try {
+      ratesApi.getCurrentRates().then((r) => {
+        if (r) {
+          let pRates = r.part_rates;
+          if (!pRates || Object.keys(pRates).length === 0) {
+            try {
+              const storedPartRates = localStorage.getItem('dqp_part_rates');
+              if (storedPartRates) pRates = JSON.parse(storedPartRates);
+            } catch {}
+          }
+          setActiveRates(prev => ({
+            ...prev,
+            ...r,
+            part_rates: pRates || prev.part_rates || {},
+            material_rates: { ...prev.material_rates, ...(r.material_rates || {}) },
+            labour_rates: { ...prev.labour_rates, ...(r.labour_rates || {}) },
+            bought_out_prices: { ...prev.bought_out_prices, ...(r.bought_out_prices || {}) },
+            automation_prices: { ...prev.automation_prices, ...(r.automation_prices || {}) },
+            fabrication_rate_per_kg: r.fabrication_rate_per_kg ?? prev.fabrication_rate_per_kg,
+            finishing_rate_per_kg: r.finishing_rate_per_kg ?? prev.finishing_rate_per_kg,
+            markup_pct: r.default_markup_pct ?? prev.markup_pct,
+          }));
+          localStorage.setItem('dqp_active_rates', JSON.stringify(r));
+        }
+        if (r && r.created_at) {
+          const diffDays = Math.max(0, Math.floor((new Date() - new Date(r.created_at)) / (1000 * 60 * 60 * 24)));
+          setRatesAgeDays(diffDays);
+        }
+      }).catch(() => {
+        try {
+          const stored = localStorage.getItem('dqp_active_rates');
+          const storedPartRates = localStorage.getItem('dqp_part_rates');
+          let parsedPartRates = {};
+          if (storedPartRates) {
+            try { parsedPartRates = JSON.parse(storedPartRates); } catch {}
+          }
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            setActiveRates(prev => ({
+              ...prev,
+              ...parsed,
+              part_rates: parsed.part_rates || parsedPartRates || prev.part_rates || {},
+              material_rates: { ...prev.material_rates, ...(parsed.material_rates || {}) },
+              labour_rates: { ...prev.labour_rates, ...(parsed.labour_rates || {}) },
+              bought_out_prices: { ...prev.bought_out_prices, ...(parsed.bought_out_prices || {}) },
+              automation_prices: { ...prev.automation_prices, ...(parsed.automation_prices || {}) },
+            }));
+          } else if (storedPartRates) {
+            setActiveRates(prev => ({ ...prev, part_rates: parsedPartRates }));
+          }
+        } catch (e) {}
+      });
+    } catch (e) {}
+
+    // Check for RFQ Intake Prefill
+    try {
+      const prefillStr = localStorage.getItem('rapidbid_rfq_prefill');
+      if (prefillStr) {
+        const p = JSON.parse(prefillStr);
+        if (p.customer_name) setCustomerName(p.customer_name);
+        if (p.project_name) setProjectRef(p.project_name);
+        if (p.width_mm) setWidth(Number(p.width_mm));
+        if (p.height_mm) setHeight(Number(p.height_mm));
+        if (p.depth_mm) setDepth(Number(p.depth_mm));
+        if (p.quantity) setQuantity(Number(p.quantity));
+        if (p.actuation) {
+          const act = p.actuation.toLowerCase();
+          if (act.includes('pneumat')) setActuatorType('pneumatic');
+          else if (act.includes('manual')) setActuatorType('manual');
+          else setActuatorType('electric');
+        }
+        if (p.flap_material) {
+          setGateMaterial(p.flap_material);
+          setMbMaterial(p.flap_material);
+        }
+        localStorage.removeItem('rapidbid_rfq_prefill');
+      }
+    } catch (e) {
+      console.warn('Could not parse RFQ prefill data:', e);
+    }
   }, []);
+
+  useEffect(() => {
+    if (rfqPrefill) {
+      if (rfqPrefill.customer_name) setCustomerName(rfqPrefill.customer_name);
+      if (rfqPrefill.project_name) setProjectRef(rfqPrefill.project_name);
+      if (rfqPrefill.width_mm) setWidth(Number(rfqPrefill.width_mm));
+      if (rfqPrefill.height_mm) setHeight(Number(rfqPrefill.height_mm));
+      if (rfqPrefill.depth_mm) setDepth(Number(rfqPrefill.depth_mm));
+      if (rfqPrefill.quantity) setQuantity(Number(rfqPrefill.quantity));
+      if (rfqPrefill.actuation) {
+        const act = rfqPrefill.actuation.toLowerCase();
+        if (act.includes('pneumat')) setActuatorType('pneumatic');
+        else if (act.includes('manual')) setActuatorType('manual');
+        else setActuatorType('electric');
+      }
+      if (rfqPrefill.flap_material) {
+        setGateMaterial(rfqPrefill.flap_material);
+        setMbMaterial(rfqPrefill.flap_material);
+      }
+      if (rfqPrefill.product_type) {
+        setProductCategory(rfqPrefill.product_type.toLowerCase() === 'valve' ? 'valve' : 'damper');
+      }
+    }
+  }, [rfqPrefill]);
 
   const fetchInitialCalculation = async () => {
     try {
@@ -531,16 +722,168 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
     return edits;
   };
 
+  // Correlated & Proportional Part Rules
+  // If any part in a correlation group has its dimensions modified, all proportional parts automatically update
+  const CORRELATED_PART_GROUPS = [
+    // Pair 1: Housing Side Plate A (Sr.No 1) and Housing Side Plate B (Sr.No 2)
+    {
+      groupId: 'side-plates',
+      name: 'Housing Side Plates (Symmetric)',
+      parts: [1, 2],
+      fields: ['dim_1', 'dim_2', 'dim_3'],
+    },
+    // Group 2: Housing Top Plate (3), Housing Middle Plate (4), Housing Bottom Plate (5)
+    {
+      groupId: 'housing-horizontal-plates',
+      name: 'Housing Horizontal Plates (Top/Middle/Bottom)',
+      parts: [3, 4, 5],
+      fields: ['dim_1', 'dim_2', 'dim_3'],
+    },
+    // Group 3: Housing Top Mounting Flat (6) & Housing Top&Bottom Flat (7)
+    {
+      groupId: 'mounting-flats',
+      name: 'Housing Mounting Flats',
+      parts: [6, 7],
+      fields: ['dim_1', 'dim_2', 'dim_3'],
+    },
+    // Group 4: Upper Side Pinion Bkt (9) & Bottom Side Pinion Bkt (18)
+    {
+      groupId: 'pinion-brackets',
+      name: 'Pinion Assembly Brackets',
+      parts: [9, 18],
+      fields: ['dim_1', 'dim_2'],
+    },
+    // Group 5: Upper Pinion Stiffener (10) & Bottom Pinion Stiffener (19)
+    {
+      groupId: 'pinion-stiffeners',
+      name: 'Pinion Assembly Stiffeners',
+      parts: [10, 19],
+      fields: ['dim_1', 'dim_2'],
+    },
+    // Group 6: Upper Holder A1 (11) & Bottom Holder A1 (20)
+    {
+      groupId: 'pinion-holders',
+      name: 'Pinion Assembly Holders',
+      parts: [11, 20],
+      fields: ['dim_1', 'dim_2'],
+    },
+    // Group 7: Housing Strength 'C' Channel (22), 'L' Angle A1 (23), 'L' Angle A2 (24)
+    {
+      groupId: 'housing-reinforcements',
+      name: 'Housing Reinforcement Channels & Angles',
+      parts: [22, 23, 24],
+      fields: ['dim_1'],
+    },
+    // Group 8: Housing Sealing Block (25) & Housing Sealing Flat (26)
+    {
+      groupId: 'sealing-block-flat',
+      name: 'Housing Sealing Block & Flat',
+      parts: [25, 26],
+      fields: ['dim_1', 'dim_2'],
+    },
+    // Group 9: Stopper Plate (27) & Stopper Sealing Plate (28)
+    {
+      groupId: 'stopper-plates',
+      name: 'Stopper Plate & Stainless Sealing Strip',
+      parts: [27, 28],
+      fields: ['dim_1'],
+    },
+    // Group 10: Flap Plate (29) & Flap Weld Plate (30)
+    {
+      groupId: 'flap-assembly',
+      name: 'Damper Flap Blade Assembly',
+      parts: [29, 30],
+      fields: ['dim_1'],
+    },
+    // Group 11: Flap Guiding Roller (38) & Guiding Roller Pin (39)
+    {
+      groupId: 'roller-pins-flap',
+      name: 'Flap Guiding Roller & Pin Assembly',
+      parts: [38, 39],
+      fields: ['dim_2'],
+    },
+    // Group 12: Rack Guiding Roller Pin (40) & Guiding Roller (41)
+    {
+      groupId: 'roller-pins-rack',
+      name: 'Rack Guiding Roller & Pin Assembly',
+      parts: [40, 41],
+      fields: ['dim_2'],
+    },
+    // Group 13: Upper Pinion Pin (42) & Bottom Pinion Pin (45)
+    {
+      groupId: 'pinion-pins',
+      name: 'Upper & Lower Pinion Drive Pins',
+      parts: [42, 45],
+      fields: ['dim_1', 'dim_2'],
+    },
+    // Group 14: Upper Holder Bush (43) & Bottom Holder Bush (44)
+    {
+      groupId: 'pinion-bushes',
+      name: 'Pinion Holder Precision Bushes',
+      parts: [43, 44],
+      fields: ['dim_1', 'dim_2'],
+    },
+  ];
+
   const updateBomField = (lineIndex, field, value) => setManualBomEdits((current) => {
+    const nextEdits = { ...current };
+    const srcLine = calcResult?.lines?.[lineIndex] || initialCertifiedCostSheet?.lines?.[lineIndex];
+    const srcSrNo = srcLine?.sr_no || (lineIndex + 1);
+
     const nextLine = {
       ...current[lineIndex],
       [field]: value,
-      edit_note: current[lineIndex]?.edit_note || 'Manual BOM edit',
+      edit_note: current[lineIndex]?.edit_note || `Manual BOM edit (Part ${srcSrNo})`,
     };
     if (field !== 'line_total' && field !== 'is_delete' && field !== 'edit_note' && field !== 'moc') {
       delete nextLine.line_total;
     }
-    return { ...current, [lineIndex]: nextLine };
+    nextEdits[lineIndex] = nextLine;
+
+    // Check if dimension change has correlated proportional parts
+    if (['dim_1', 'dim_2', 'dim_3'].includes(field) && typeof value === 'number' && value > 0) {
+      const matchedGroup = CORRELATED_PART_GROUPS.find(
+        (g) => g.parts.includes(srcSrNo) && g.fields.includes(field)
+      );
+
+      if (matchedGroup) {
+        const srcBasePart = (initialCertifiedCostSheet?.lines || []).find((p) => p.sr_no === srcSrNo);
+        const srcBaseVal = Number(srcBasePart?.[field] || 1);
+        const correlatedUpdatedNames = [];
+
+        matchedGroup.parts.forEach((targetSrNo) => {
+          if (targetSrNo === srcSrNo) return;
+          const targetLineIdx = (calcResult?.lines || []).findIndex((l) => l.sr_no === targetSrNo);
+          if (targetLineIdx < 0) return;
+
+          const targetBasePart = (initialCertifiedCostSheet?.lines || []).find((p) => p.sr_no === targetSrNo);
+          const targetBaseVal = Number(targetBasePart?.[field] || srcBaseVal);
+          const ratio = srcBaseVal > 0 ? (targetBaseVal / srcBaseVal) : 1.0;
+          const proportionalVal = Math.round(value * ratio * 10) / 10;
+
+          const targetEdit = {
+            ...nextEdits[targetLineIdx],
+            [field]: proportionalVal,
+            edit_note: `Proportional to Part ${srcSrNo} (${matchedGroup.name})`,
+          };
+          delete targetEdit.line_total;
+          nextEdits[targetLineIdx] = targetEdit;
+          correlatedUpdatedNames.push(`Part ${targetSrNo} (${targetBasePart?.part_name || ''}: ${proportionalVal} mm)`);
+        });
+
+        if (correlatedUpdatedNames.length > 0) {
+          setProportionalNotice({
+            sourceSrNo: srcSrNo,
+            sourceName: srcLine?.part_name || `Part ${srcSrNo}`,
+            field,
+            value,
+            correlated: correlatedUpdatedNames,
+          });
+        }
+      }
+    }
+
+    return nextEdits;
   });
 
   const readNumber = (raw, fallback = 0) => {
@@ -668,8 +1011,8 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
     }
   };
 
-  // Download Live Excel Spreadsheet with Full 45-Part Schedule and Dynamic Formulas
-  const handleDownloadExcel = () => {
+  // Build live quote snapshot for export
+  const buildLiveData = () => {
     const liveLines = (displayLines || []).map((l, idx) => ({
       sr_no: l.sr_no || (idx + 1),
       part_name: l.part_name,
@@ -692,9 +1035,9 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
       edit_note: l.edit_note,
     }));
 
-    const liveData = {
-      id: calcResult?.id,
-      quote_number: quoteNumber || (calcResult?.quote_number || 'DRAFT-45PARTS'),
+    return {
+      id: saveSuccess?.id || calcResult?.id,
+      quote_number: saveSuccess?.quote_number || calcResult?.quote_number || 'RB-DRAFT',
       customer_name: customerName || 'Valued Customer',
       damper_type: isValveMode ? selectedValveTypeId : (isMultiBlade ? 'multi_blade' : 'rack_and_pinion'),
       width_mm: Number(width),
@@ -718,72 +1061,16 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
       fabrication_cost: fabricationCost,
       total_cost: totalDamperCost,
       quoted_price: unitQuotedPrice,
+      is_admin: isAdmin,
     };
-
-    if (calcResult?.id) {
-      quotesApi.downloadExcel(calcResult.id);
-    } else {
-      quotesApi.downloadExcel(liveData);
-    }
   };
 
-  // Download Live Quotation PDF
-  const handleDownloadPdf = () => {
-    const liveLines = (displayLines || []).map((l, idx) => ({
-      sr_no: l.sr_no || (idx + 1),
-      part_name: l.part_name,
-      is_round: !!l.is_round,
-      dim_1: l.dim1 ?? l.dim_1 ?? 0,
-      dim_2: l.dim2 ?? l.dim_2 ?? 0,
-      dim_3: l.dim3 ?? l.dim_3 ?? 0,
-      qty: l.quantity ?? l.qty ?? 1,
-      weight: l.total_weight,
-      moc: l.moc,
-      material_rate: l.active_mat_rate ?? l.material_rate ?? 75,
-      rm_cost: l.active_rm_cost ?? l.rm_cost ?? 0,
-      plate_labour_rate: l.active_lc_rate ?? l.plate_labour_rate ?? 10,
-      plate_labour_cost: l.active_lc_cost ?? l.plate_labour_cost ?? 0,
-      per_piece_machining: l.active_mc ?? l.per_piece_machining ?? 0,
-      rolling_cost: l.rolling_cost || 0,
-      mfg_cost_total: l.active_total_mc ?? l.mfg_cost_total ?? 0,
-      line_total: l.active_line_total ?? l.line_total ?? 0,
-      is_manually_edited: l.is_manually_edited,
-      edit_note: l.edit_note,
-    }));
-
-    const liveData = {
-      id: calcResult?.id,
-      quote_number: quoteNumber || (calcResult?.quote_number || 'DRAFT-45PARTS'),
-      customer_name: customerName || 'Valued Customer',
-      damper_type: isValveMode ? selectedValveTypeId : (isMultiBlade ? 'multi_blade' : 'rack_and_pinion'),
-      width_mm: Number(width),
-      height_mm: Number(height),
-      depth_mm: Number(depth),
-      quantity: Number(quantity),
-      markup_pct: (markupMultiplier - 1.0) * 100.0,
-      total_weight_kg: totalWeight,
-      raw_material_cost: totalRmCost,
-      mfg_cost: totalMcCost,
-      lines: liveLines,
-      rates_snapshot: {
-        ...activeRates,
-        fabrication_rate_per_kg: fabricationRatePerKg,
-        finishing_rate_per_kg: finishingRatePerKg,
-      },
-      bought_out_breakdown: calcResult?.bought_out_breakdown || {},
-      automation_breakdown: calcResult?.automation_breakdown || {},
-      basic_cost: damperBasicCost,
-      automation_cost: damperAutomationCost,
-      fabrication_cost: fabricationCost,
-      total_cost: totalDamperCost,
-      quoted_price: unitQuotedPrice,
-    };
-
-    if (calcResult?.id) {
-      quotesApi.downloadPdf(calcResult.id);
-    } else {
-      quotesApi.downloadPdf(liveData);
-    }
+  // Download Live Excel Spreadsheet
+  const handleDownloadExcel = () => {
+    quotesApi.downloadExcel({
+      ...buildLiveData(),
+      is_admin: isAdmin,
+    }, isAdmin);
   };
 
   const handleSaveQuote = async () => {
@@ -843,10 +1130,36 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
       const res = await quotesApi.saveQuote(payload);
       setSaveSuccess(res);
       alert(`Quote saved successfully as ${res.quote_number}!`);
+      return res;
     } catch (err) {
       alert(err.response?.data?.detail || 'Failed to save quote.');
+      return null;
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDownloadCustomerPdf = () => {
+    try {
+      if (saveSuccess?.id) {
+        quotesApi.downloadCustomerPdf(saveSuccess.id);
+      } else {
+        quotesApi.downloadCustomerPdf(buildLiveData());
+      }
+    } catch (err) {
+      alert('Failed to generate Customer PDF: ' + (err.message || 'Error'));
+    }
+  };
+
+  const handleDownloadCostSheetPdf = () => {
+    try {
+      if (saveSuccess?.id) {
+        quotesApi.downloadCostSheetPdf(saveSuccess.id);
+      } else {
+        quotesApi.downloadCostSheetPdf(buildLiveData());
+      }
+    } catch (err) {
+      alert('Failed to generate Cost Sheet PDF: ' + (err.message || 'Error'));
     }
   };
 
@@ -914,8 +1227,10 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
       const origMfg = Number(line.mfg_cost_total ?? line.mfg_cost ?? 0);
       const origTotal = Number(line.line_total ?? line.total_cost ?? (origRm + origMfg));
 
+      const masterPartRate = activeRates?.part_rates?.[line.sr_no]?.material_rate 
+        ?? activeRates?.part_rates?.[String(line.sr_no)]?.material_rate;
       const customMatRate = Number(
-        edit.material_rate ?? lineRateOverrides[line.sr_no] ?? line.material_rate ?? 0
+        edit.material_rate ?? lineRateOverrides[line.sr_no] ?? masterPartRate ?? line.material_rate ?? 0
       );
       const customLcRate = Number(
         edit.plate_labour_rate ?? lineLcRateOverrides[line.sr_no] ?? line.plate_labour_rate ?? (isRound ? 0 : 10)
@@ -1160,14 +1475,20 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
     ? calcResult.batch_totals.quoted_price
     : (unitQuotedPrice * quantity);
 
+  const liveMarginPct = unitQuotedPrice > 0 ? Math.max(0, ((unitQuotedPrice - totalDamperCost) / unitQuotedPrice) * 100) : 0;
+  const minMargin = companySettings?.approval_min_margin_pct ?? 15.0;
+  const isHealthyMargin = liveMarginPct >= minMargin;
+  const isLowMargin = liveMarginPct >= (minMargin - 5) && !isHealthyMargin;
+  const isStaleRates = ratesAgeDays > (companySettings?.stale_rate_days_limit ?? 30);
+
   return (
-    <div className="min-h-screen bg-[#F9F7F2] text-[#242826] font-sans antialiased pb-16">
-      {/* 1. Designer Pastel Hero Banner Section */}
-      <section className="bg-gradient-to-b from-[#FFFDF9] via-[#F4EFE6]/70 to-[#F9F7F2] border-b border-[#E8E3D8] pt-8 pb-7 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-base text-text-primary font-sans antialiased pb-16 transition-colors duration-200">
+      {/* 1. Designer Hero Banner Section */}
+      <section className="bg-surface border-b border-border-subtle pt-8 pb-7 px-4 sm:px-6 lg:px-8">
         <div className="max-w-[1440px] mx-auto space-y-6">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
             <div className="max-w-3xl space-y-2">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-[#EEF5F1] text-[#2C483D] border border-[#D5E5DC]">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-[#EEF5F1] bg-elevated text-[#2C483D] text-primary border border-[#D5E5DC] border-subtle">
                 <span className="w-2 h-2 rounded-full bg-[#C46346]"></span>
                 <span>
                   {productCategory === 'valve'
@@ -1175,7 +1496,7 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                     : 'Industrial Damper CPQ Suite • Multi-Type Damper Configurator'}
                 </span>
               </div>
-              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-[#242826] tracking-tight leading-tight">
+              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-primary text-primary tracking-tight leading-tight">
                 {productCategory === 'valve' ? (
                   <>
                     Valve Quote Pro: Sizing to Production BOM{' '}
@@ -1194,7 +1515,7 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                   </>
                 )}
               </h1>
-              <p className="text-xs sm:text-sm text-[#5C6460] leading-relaxed">
+              <p className="text-xs sm:text-sm text-secondary text-muted leading-relaxed">
                 {productCategory === 'valve'
                   ? 'Configure industrial butterfly valves, knife gate valves, ball valves, and globe valves with real-time 3D CAD modeling, ASME/EN pressure ratings, materials, and live automated costing.'
                   : 'Configure industrial dampers with real-time 3D CAD modeling, multi-type selection, engineering customization, and automated cost estimation with live editable rates.'}
@@ -1204,14 +1525,14 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
             {/* Top Corner Product Category Switcher & Header Quick Actions */}
             <div className="flex flex-col sm:flex-row items-end sm:items-center gap-3 shrink-0">
               {/* Prominent Top Corner Switcher */}
-              <div className="flex items-center p-1.5 bg-[#252B28] rounded-2xl shadow-lg border border-[#3B433F]">
+              <div className="flex items-center p-1.5 bg-[#252B28] bg-elevated rounded-2xl shadow-lg border border-[#3B433F] border-subtle">
                 <button
                   type="button"
                   onClick={() => setProductCategory('damper')}
                   className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-extrabold transition-all ${
                     productCategory === 'damper'
                       ? 'bg-[#3D6353] text-white shadow-md ring-2 ring-[#3D6353]/40'
-                      : 'text-slate-300 hover:text-white hover:bg-[#343C38]'
+                      : 'text-slate-300 hover:text-white hover:bg-[#343C38] hover:bg-elevated/70'
                   }`}
                 >
                   <span className="text-base">🏭</span>
@@ -1226,7 +1547,7 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                   className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-extrabold transition-all ${
                     productCategory === 'valve'
                       ? 'bg-[#C46346] text-white shadow-md ring-2 ring-[#C46346]/40'
-                      : 'text-slate-300 hover:text-white hover:bg-[#343C38]'
+                      : 'text-slate-300 hover:text-white hover:bg-[#343C38] hover:bg-elevated/70'
                   }`}
                 >
                   <span className="text-base">⚙️</span>
@@ -1244,7 +1565,7 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                   className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold border transition-all shadow-sm ${
                     show3DViewer 
                       ? 'bg-[#3D6353] text-white border-[#3D6353]' 
-                      : 'bg-[#FFFDFB] hover:bg-[#F4EFE6] text-[#3E4541] border-[#DDD6C8]'
+                      : 'bg-[#FFFDFB] bg-elevated hover:bg-elevated hover:bg-elevated/70 text-[#3E4541] text-primary border-[#DDD6C8] border-subtle'
                   }`}
                 >
                   <Eye className="w-3.5 h-3.5" />
@@ -1254,7 +1575,7 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                 <button
                   onClick={handleResetRates}
                   title="Reset all rates to company standard baseline"
-                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold border border-[#DDD6C8] bg-[#FFFDFB] hover:bg-[#F4EFE6] text-[#3E4541] transition-all shadow-sm"
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold border border-[#DDD6C8] border-subtle bg-[#FFFDFB] bg-elevated hover:bg-elevated hover:bg-elevated/70 text-[#3E4541] text-primary transition-all shadow-sm"
                 >
                   <RotateCcw className="w-3.5 h-3.5 text-[#C46346]" />
                   <span>Reset</span>
@@ -1270,13 +1591,24 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                 </button>
 
                 <button
-                  onClick={handleDownloadPdf}
-                  title="Download Official Technical Quotation PDF"
-                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold bg-[#3D6353] hover:bg-[#2F4D40] text-white shadow-sm transition-all"
+                  onClick={handleDownloadCustomerPdf}
+                  title="Download Customer Quotation PDF (Specs, totals, terms, validity; NO internal cost or margin)"
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold bg-[#2563eb] hover:bg-[#1d4ed8] text-white shadow-sm transition-all"
                 >
                   <FileText className="w-3.5 h-3.5" />
-                  <span>PDF Sheet</span>
+                  <span>Customer PDF</span>
                 </button>
+
+                {isAdmin && (
+                  <button
+                    onClick={handleDownloadCostSheetPdf}
+                    title="Download Confidential Cost Sheet PDF (Full internal BOM, costs, margins, and rate snapshot)"
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold bg-[#334155] hover:bg-[#1e293b] text-white shadow-sm transition-all"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Cost Sheet PDF</span>
+                  </button>
+                )}
 
                 <button
                   onClick={handleSaveQuote}
@@ -1293,61 +1625,125 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
             </div>
           </div>
 
-          {/* 4 Pastel Metric Counter Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5 pt-2">
-            <div className="bg-[#FFFDFB] border border-[#E8E3D8] rounded-xl p-3.5 shadow-sm hover:shadow transition-shadow flex items-center justify-between">
+          {/* 6 Metric Counter & Guard Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 pt-2">
+            <div className="bg-[#FFFDFB] border border-subtle rounded-xl p-3 shadow-sm flex items-center justify-between">
               <div>
-                <div className="text-[11px] font-semibold text-[#6E7772] uppercase tracking-wider">
+                <div className="text-[10px] font-semibold text-[#6E7772] uppercase tracking-wider">
                   Costing Accuracy
                 </div>
-                <div className="text-2xl font-black text-[#3D6353] font-mono mt-0.5">
+                <div className="text-xl font-black text-[#3D6353] font-mono mt-0.5">
                   100%
                 </div>
               </div>
-              <div className="w-10 h-10 rounded-full bg-[#EEF5F1] flex items-center justify-center text-[#3D6353]">
-                <CheckCircle2 className="w-5 h-5" />
+              <div className="w-8 h-8 rounded-full bg-[#EEF5F1] flex items-center justify-center text-[#3D6353]">
+                <CheckCircle2 className="w-4 h-4" />
               </div>
             </div>
 
-            <div className="bg-[#FFFDFB] border border-[#E8E3D8] rounded-xl p-3.5 shadow-sm hover:shadow transition-shadow flex items-center justify-between">
+            <div className="bg-[#FFFDFB] border border-subtle rounded-xl p-3 shadow-sm flex items-center justify-between">
               <div>
-                <div className="text-[11px] font-semibold text-[#6E7772] uppercase tracking-wider">
+                <div className="text-[10px] font-semibold text-[#6E7772] uppercase tracking-wider">
                   Configured BOM
                 </div>
-                <div className="text-2xl font-black text-[#3D6353] font-mono mt-0.5">
+                <div className="text-xl font-black text-[#3D6353] font-mono mt-0.5">
                   45 <span className="text-xs font-normal text-[#6E7772]">Parts</span>
                 </div>
               </div>
-              <div className="w-10 h-10 rounded-full bg-[#EEF5F1] flex items-center justify-center text-[#3D6353]">
-                <Layers className="w-5 h-5" />
+              <div className="w-8 h-8 rounded-full bg-[#EEF5F1] flex items-center justify-center text-[#3D6353]">
+                <Layers className="w-4 h-4" />
               </div>
             </div>
 
-            <div className="bg-[#FFFDFB] border border-[#E8E3D8] rounded-xl p-3.5 shadow-sm hover:shadow transition-shadow flex items-center justify-between">
+            <div className="bg-[#FFFDFB] border border-subtle rounded-xl p-3 shadow-sm flex items-center justify-between">
               <div>
-                <div className="text-[11px] font-semibold text-[#6E7772] uppercase tracking-wider">
-                  Quote Turnaround
+                <div className="text-[10px] font-semibold text-[#6E7772] uppercase tracking-wider">
+                  Turnaround
                 </div>
-                <div className="text-2xl font-black text-[#C46346] font-mono mt-0.5">
+                <div className="text-xl font-black text-[#C46346] font-mono mt-0.5">
                   &lt; 2 <span className="text-xs font-normal text-[#6E7772]">Min</span>
                 </div>
               </div>
-              <div className="w-10 h-10 rounded-full bg-[#FDF1EB] flex items-center justify-center text-[#C46346]">
-                <Clock className="w-5 h-5" />
+              <div className="w-8 h-8 rounded-full bg-[#FDF1EB] flex items-center justify-center text-[#C46346]">
+                <Clock className="w-4 h-4" />
               </div>
             </div>
 
-            <div className="bg-[#FFFDFB] border border-[#E8E3D8] rounded-xl p-3.5 shadow-sm hover:shadow transition-shadow flex items-center justify-between">
+            <div className="bg-[#FFFDFB] border border-subtle rounded-xl p-3 shadow-sm flex items-center justify-between">
               <div>
-                <div className="text-[11px] font-semibold text-[#6E7772] uppercase tracking-wider">
-                  Unit Baseline Price
+                <div className="text-[10px] font-semibold text-[#6E7772] uppercase tracking-wider">
+                  Unit Price
                 </div>
-                <div className="text-2xl font-black text-[#2F5241] font-mono mt-0.5">
-                  ₹ 20.24 L
+                <div className="text-xl font-black text-[#2F5241] font-mono mt-0.5">
+                  ₹ {formatNumber(unitQuotedPrice, 0)}
                 </div>
               </div>
-              <div className="w-10 h-10 rounded-full bg-[#EEF5F1] flex items-center justify-center text-[#2F5241]">
-                <CheckCircle2 className="w-5 h-5" />
+              <div className="w-8 h-8 rounded-full bg-[#EEF5F1] flex items-center justify-center text-[#2F5241]">
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+            </div>
+
+            {/* Live Margin Guard Card (Admin) vs Proportional Pricing Card (Member) */}
+            {isAdmin ? (
+              <div className={`rounded-xl p-3 shadow-sm border flex items-center justify-between ${
+                isHealthyMargin
+                  ? 'bg-emerald-50/70 border-emerald-300'
+                  : isLowMargin
+                    ? 'bg-amber-50/70 border-amber-300'
+                    : 'bg-rose-50/70 border-rose-300 animate-pulse'
+              }`}>
+                <div>
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">Margin Guard</div>
+                  <div className={`text-xl font-black font-mono mt-0.5 ${
+                    isHealthyMargin ? 'text-emerald-700' : isLowMargin ? 'text-amber-700' : 'text-rose-700'
+                  }`}>
+                    {liveMarginPct.toFixed(1)}%
+                  </div>
+                  <div className="text-[10px] font-bold">
+                    {isHealthyMargin ? 'Healthy (OK)' : isLowMargin ? 'Caution (Low)' : 'Below Min!'}
+                  </div>
+                </div>
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${
+                  isHealthyMargin ? 'bg-emerald-200 text-emerald-800' : isLowMargin ? 'bg-amber-200 text-amber-800' : 'bg-rose-200 text-rose-800'
+                }`}>
+                  🛡️
+                </div>
+              </div>
+            ) : (
+              <div className="bg-[#FFFDFB] border border-blue-200 rounded-xl p-3 shadow-sm flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] font-semibold text-blue-800 uppercase tracking-wider">
+                    Dynamic Pricing
+                  </div>
+                  <div className="text-sm font-black text-[#2F5241] mt-0.5 flex items-center gap-1.5 font-mono">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Auto Proportional
+                  </div>
+                  <div className="text-[10px] text-secondary font-medium mt-0.5">
+                    Rates managed by Admin
+                  </div>
+                </div>
+                <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-blue-700 border border-blue-200">
+                  <Calculator className="w-4 h-4" />
+                </div>
+              </div>
+            )}
+
+            {/* Rate Freshness Card */}
+            <div className={`rounded-xl p-3 shadow-sm border flex items-center justify-between ${
+              isStaleRates ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-200'
+            }`}>
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">Rate Freshness</div>
+                <div className={`text-base font-black font-mono mt-0.5 ${isStaleRates ? 'text-amber-700' : 'text-slate-700'}`}>
+                  {ratesAgeDays === 0 ? 'Today' : `${ratesAgeDays}d ago`}
+                </div>
+                <div className="text-[10px] font-medium text-slate-500">
+                  {isStaleRates ? '⚠️ Rates Stale' : '✓ Standard Fresh'}
+                </div>
+              </div>
+              <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-600">
+                <Clock className="w-4 h-4" />
               </div>
             </div>
           </div>
@@ -1832,12 +2228,12 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                 }
               `}</style>
 
-              <div className="bg-[#FFFDFB] border border-[#E8E3D8] rounded-2xl p-5 shadow-sm">
-                <div className="flex flex-wrap items-center gap-2 mb-4 border-b border-[#EAE5DB] pb-3">
+              <div className="bg-[#FFFDFB] border border-subtle rounded-2xl p-5 shadow-sm">
+                <div className="flex flex-wrap items-center gap-2 mb-4 border-b border-subtle pb-3">
                   <span className="w-2.5 h-2.5 rounded-full bg-[#C46346]"></span>
-                  <span className="font-bold text-sm text-[#242826] uppercase tracking-wide">Configuration</span>
+                  <span className="font-bold text-sm text-primary uppercase tracking-wide">Configuration</span>
                   <div className="ml-auto inline-flex rounded border border-[#DDD6C8] p-0.5" aria-label="Dimension input units">
-                    {['mm', 'm'].map((unit) => <button key={unit} type="button" aria-pressed={dimensionUnit === unit} onClick={() => setDimensionUnit(unit)} className={`min-w-10 px-2 py-1 text-xs font-bold ${dimensionUnit === unit ? 'bg-[#3D6353] text-white' : 'text-[#5C6460] hover:bg-[#F4EFE6]'}`}>{unit}</button>)}
+                    {['mm', 'm'].map((unit) => <button key={unit} type="button" aria-pressed={dimensionUnit === unit} onClick={() => setDimensionUnit(unit)} className={`min-w-10 px-2 py-1 text-xs font-bold ${dimensionUnit === unit ? 'bg-[#3D6353] text-white' : 'text-secondary hover:bg-elevated'}`}>{unit}</button>)}
                   </div>
                   <span className="ml-auto text-xs font-mono text-[#2F4D40] font-semibold bg-[#EEF5F1] px-2.5 py-0.5 rounded-full border border-[#D5E5DC]">
                     {width} × {height} × {depth} mm
@@ -1971,11 +2367,11 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
         </div>
 
         {/* 3. Damper Types Selector & Engineering Customization */}
-        <div className="bg-[#FFFDFB] border border-[#E8E3D8] rounded-2xl p-5 sm:p-6 shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#EAE5DB] pb-3">
+        <div className="bg-[#FFFDFB] border border-subtle rounded-2xl p-5 sm:p-6 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-subtle pb-3">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-[#C46346]"></span>
-              <h2 className="font-bold text-sm sm:text-base text-[#242826] uppercase tracking-wide">
+              <h2 className="font-bold text-sm sm:text-base text-primary uppercase tracking-wide">
                 2. Select Damper Model & Engineering Customization
               </h2>
             </div>
@@ -1995,12 +2391,12 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                   className={`p-3.5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between text-left ${
                     isSelected
                       ? 'bg-[#EEF5F1] border-[#3D6353] ring-2 ring-[#3D6353]/20 shadow-sm'
-                      : 'bg-white border-[#E8E3D8] hover:border-[#DDD6C8] hover:bg-[#FAF7F2]'
+                      : 'bg-white border-subtle hover:border-[#DDD6C8] hover:bg-elevated'
                   }`}
                 >
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-bold text-xs text-[#242826] line-clamp-1">
+                      <span className="font-bold text-xs text-primary line-clamp-1">
                         {type.shortName}
                       </span>
                       {isSelected ? (
@@ -2012,11 +2408,11 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                     <div className="text-[10px] font-semibold text-[#C46346]">
                       {type.badge}
                     </div>
-                    <p className="text-[11px] text-[#5C6460] leading-snug line-clamp-2">
+                    <p className="text-[11px] text-secondary leading-snug line-clamp-2">
                       {type.description}
                     </p>
                   </div>
-                  <div className="mt-2.5 pt-2 border-t border-[#EAE5DB] flex items-center justify-between text-[10px] text-[#5C6460] font-mono">
+                  <div className="mt-2.5 pt-2 border-t border-subtle flex items-center justify-between text-[10px] text-secondary font-mono">
                     <span>Factor: {type.typeFactor.toFixed(2)}×</span>
                     {type.id === 'rack-pinion' && (
                       <span className="text-[#2F4D40] font-bold">45-Part BOM</span>
@@ -3553,15 +3949,15 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
         )}
 
         {/* 4. Parametric 3D CAD Model Designer */}
-        <div className="bg-white border border-slate-200/90 rounded-2xl p-5 sm:p-6 shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+        <div id="cad-viewer-section" className="bg-white bg-surface border border-slate-200/90 border-subtle rounded-2xl p-5 sm:p-6 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 border-subtle pb-3">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-[#005daa]"></span>
               <div>
-                <h2 className="font-bold text-sm sm:text-base text-[#212529] uppercase tracking-wide">
+                <h2 className="font-bold text-sm sm:text-base text-[#212529] text-primary uppercase tracking-wide">
                   {isValveMode ? '4. Parametric 3D CAD Valve Model Designer' : '4. Parametric 3D CAD Damper Model Designer'}
                 </h2>
-                <p className="text-xs text-[#64748b]">
+                <p className="text-xs text-[#64748b] text-muted">
                   {isValveMode
                     ? `Model generated for: DN${valveSizeDn} (${STANDARD_VALVE_DNS.find(v => v.dn === Number(valveSizeDn))?.inch || '12"'}) • ${valvePressureRating} • ${currentValveType.name}`
                     : `Model generated to specified dimensions: ${width} × ${height} × ${depth} mm • ${currentDamperType.name}`}
@@ -3570,15 +3966,15 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="text-[11px] font-mono font-semibold px-2.5 py-1 bg-[#eff8fe] text-[#005daa] rounded-lg border border-blue-200">
+              <span className="text-[11px] font-mono font-semibold px-2.5 py-1 bg-[#eff8fe] bg-info-bg text-[#005daa] text-info rounded-lg border border-blue-200 border-info">
                 {isValveMode ? `Drive: ${valveActuator.split(' ')[0].toUpperCase()}` : `Drive: ${(isMultiBlade ? mbActuatorType : actuatorType).toUpperCase()}`}
               </span>
-              <span className="text-[11px] font-mono font-semibold px-2.5 py-1 bg-amber-50 text-[#f89030] rounded-lg border border-amber-200">
+              <span className="text-[11px] font-mono font-semibold px-2.5 py-1 bg-amber-50 bg-warning-bg text-[#f89030] text-warning rounded-lg border border-amber-200 border-warning">
                 {isValveMode ? `Rating: ${valvePressureRating}` : `Seal: ${sealingEfficiency}`}
               </span>
               <button
                 onClick={() => setShow3DViewer(!show3DViewer)}
-                className="px-3 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
+                className="px-3 py-1 rounded-lg text-xs font-semibold bg-slate-100 bg-elevated hover:bg-slate-200 hover:bg-elevated/70 text-slate-700 text-primary transition-colors"
               >
                 {show3DViewer ? 'Collapse View' : 'Expand 3D CAD'}
               </button>
@@ -3586,7 +3982,7 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
           </div>
 
           {show3DViewer ? (
-            <div className="space-y-2">
+            <div className="space-y-4">
               <Damper3DViewer 
                 productCategory={productCategory}
                 valveType={selectedValveTypeId}
@@ -3643,8 +4039,99 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                 aerofoilMaxThick={maxProfileThick}
                 aerofoilCamber={camberPct}
                 customProfileShape={customProfileShape}
+                selectedPartKey={selectedCadPartKey}
+                onSelectPart={(key) => setSelectedCadPartKey(key)}
               />
-              <div className="flex items-center justify-between text-[11px] text-[#64748b] px-1">
+
+              {/* Active 3D Component Inspection & 45-Part BOM Cross-Reference */}
+              <div className="bg-slate-50/80 bg-elevated border border-slate-200/90 border-subtle rounded-xl p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 border-subtle pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-cyan-500 animate-ping" />
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 text-muted">
+                        Active 3D Component Inspection • Model & BOM Cross-Reference
+                      </div>
+                      <div className="text-sm font-bold text-slate-900 text-primary flex items-center gap-2">
+                        <span>{CAD_PART_BOM_MAP[selectedCadPartKey]?.name || 'Complete 3D Assembly Overview'}</span>
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 bg-info-bg text-info">
+                          {CAD_PART_BOM_MAP[selectedCadPartKey]?.category || 'Full Assembly'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Part Selector Pills */}
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                    <span className="text-[11px] font-semibold text-slate-500 text-muted">Inspect:</span>
+                    {selectedCadPartKey && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCadPartKey(null)}
+                        className="px-2 py-0.5 rounded text-[11px] font-bold bg-slate-200 bg-elevated text-slate-800 text-primary hover:bg-slate-300 transition-colors"
+                      >
+                        ✕ Show All
+                      </button>
+                    )}
+                    {Object.entries(CAD_PART_BOM_MAP).map(([key, item]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setSelectedCadPartKey(key)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all flex items-center gap-1 ${
+                          selectedCadPartKey === key
+                            ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-400'
+                            : 'bg-white bg-surface text-slate-700 text-secondary hover:bg-slate-100 hover:bg-elevated/70 border border-slate-200 border-subtle'
+                        }`}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: item.color }} />
+                        {item.name.split(' ')[0]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                  <div className="md:col-span-2 space-y-1.5">
+                    <p className="text-slate-600 text-secondary leading-relaxed text-[11px]">
+                      {CAD_PART_BOM_MAP[selectedCadPartKey]?.desc || 'Interactive CAD view. Click any part in 3D or in Table 4 to highlight that specific component and inspect its specifications.'}
+                    </p>
+                    <div className="flex items-center gap-2 text-[10px] text-slate-500 text-muted">
+                      <span className="font-semibold text-emerald-600 text-success">✓ Real-Time 3D Selection:</span>
+                      Clicking any part in the 3D model or in Table 4 automatically focuses the camera and highlights matching BOM lines below.
+                    </div>
+                  </div>
+
+                  <div className="bg-white bg-surface border border-slate-200 border-subtle rounded-lg p-2.5 space-y-1.5">
+                    <div className="text-[10px] font-bold text-slate-700 text-secondary uppercase tracking-wide flex items-center justify-between">
+                      <span>Linked 45-BOM Lines</span>
+                      <span className="font-mono text-blue-600 text-info">
+                        {selectedCadPartKey && CAD_PART_BOM_MAP[selectedCadPartKey]?.bomSrNos ? `${CAD_PART_BOM_MAP[selectedCadPartKey].bomSrNos.length} Items` : 'All 45 Items'}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
+                      {(selectedCadPartKey && CAD_PART_BOM_MAP[selectedCadPartKey]?.bomSrNos ? CAD_PART_BOM_MAP[selectedCadPartKey].bomSrNos : []).map((srNo) => (
+                        <a
+                          key={srNo}
+                          href={`#bom-row-${srNo}`}
+                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-100 bg-elevated text-slate-800 text-primary border border-slate-200 border-subtle hover:border-emerald-500 hover:text-emerald-600 transition-colors"
+                          title={`Click to jump to BOM Sr #${srNo}`}
+                        >
+                          #{srNo}
+                        </a>
+                      ))}
+                    </div>
+                    <a
+                      href="#fabricated-parts-table"
+                      className="block text-center text-[10px] font-bold text-blue-600 text-info hover:underline pt-0.5"
+                    >
+                      Jump to Highlighted BOM Rows ↓
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] text-[#64748b] text-muted px-1">
                 <span>
                   ✓ CAD model updates dynamically in real-time when any dimension, blade parameter, or valve option is adjusted above.
                 </span>
@@ -3658,90 +4145,52 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
           ) : (
             <div 
               onClick={() => setShow3DViewer(true)}
-              className="py-8 bg-slate-50 border border-dashed border-slate-300 rounded-xl text-center cursor-pointer hover:bg-blue-50/50 transition-colors"
+              className="py-8 bg-slate-50 bg-elevated border border-dashed border-slate-300 border-subtle rounded-xl text-center cursor-pointer hover:bg-blue-50/50 hover:bg-elevated/70/50 transition-colors"
             >
-              <div className="font-semibold text-xs text-[#005daa]">
+              <div className="font-semibold text-xs text-[#005daa] text-info">
                 Click to open interactive 3D CAD Model ({width} × {height} × {depth} mm)
               </div>
             </div>
           )}
         </div>
 
-        {/* 5. Master Rates Quick-Adjust Bar */}
-        <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3 text-xs bg-[#eff8fe]/60 p-3 rounded-xl border border-blue-100">
-            <div className="flex items-center gap-2 text-[#005daa] font-bold">
-              <Sliders className="w-4 h-4 text-[#005daa]" />
-              <span>Global Material Baseline (₹/kg):</span>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-lg border border-slate-200">
-                <span className="text-slate-600 font-medium">IS 2062:</span>
-                <input
-                  type="number"
-                  value={activeRates.material_rates['IS 2062']}
-                  onChange={(e) => updateMatRate('IS 2062', e.target.value)}
-                  className="w-14 px-1 py-0.5 text-right font-mono font-bold text-slate-900 bg-transparent focus:outline-none"
-                />
-              </div>
-
-              <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-lg border border-slate-200">
-                <span className="text-slate-600 font-medium">SS 304L:</span>
-                <input
-                  type="number"
-                  value={activeRates.material_rates['SS 304L']}
-                  onChange={(e) => updateMatRate('SS 304L', e.target.value)}
-                  className="w-14 px-1 py-0.5 text-right font-mono font-bold text-slate-900 bg-transparent focus:outline-none"
-                />
-              </div>
-
-              <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-lg border border-slate-200">
-                <span className="text-slate-600 font-medium">SS 410:</span>
-                <input
-                  type="number"
-                  value={activeRates.material_rates['SS 410']}
-                  onChange={(e) => updateMatRate('SS 410', e.target.value)}
-                  className="w-14 px-1 py-0.5 text-right font-mono font-bold text-slate-900 bg-transparent focus:outline-none"
-                />
-              </div>
-
-              <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-lg border border-slate-200">
-                <span className="text-slate-600 font-medium">EN8:</span>
-                <input
-                  type="number"
-                  value={activeRates.material_rates['EN8']}
-                  onChange={(e) => updateMatRate('EN8', e.target.value)}
-                  className="w-14 px-1 py-0.5 text-right font-mono font-bold text-slate-900 bg-transparent focus:outline-none"
-                />
-              </div>
-
-              <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-lg border border-slate-200">
-                <span className="text-slate-600 font-medium">Fab Rate:</span>
-                <input
-                  type="number"
-                  value={activeRates.fabrication_rate_per_kg}
-                  onChange={(e) => setActiveRates({ ...activeRates, fabrication_rate_per_kg: parseFloat(e.target.value) || 0 })}
-                  className="w-14 px-1 py-0.5 text-right font-mono font-bold text-slate-900 bg-transparent focus:outline-none"
-                />
-              </div>
-
-              <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-lg border border-[#f89030]">
-                <span className="text-[#005daa] font-bold">Markup Factor:</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="1.0"
-                  max="3.0"
-                  value={markupMultiplier}
-                  onChange={(e) => setMarkupMultiplier(parseFloat(e.target.value) || 1.10)}
-                  className="w-16 px-1 py-0.5 text-right font-mono font-bold text-[#f89030] bg-transparent focus:outline-none"
-                />
-              </div>
-            </div>
+        {/* 5. Master Rates Bar (Read-only; Rates are editable in Cost & Rate Master only) */}
+        <div className="bg-elevated bg-elevated border border-subtle border-subtle rounded-2xl p-3.5 shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 text-[#2F4D40] text-success font-bold">
+            <Lock className="w-4 h-4 text-[#3D6353] text-success" />
+            <span>Master Rates Applied (Locked):</span>
+            <span className="text-secondary text-muted font-normal text-[11px]">Rates editable in Cost & Rate Master only</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
+            <span className="px-2.5 py-1 rounded-lg bg-white bg-surface border border-[#DDD6C8] border-subtle text-primary text-primary">
+              IS 2062: <strong className="text-[#3D6353] text-success">₹{activeRates?.material_rates?.['IS 2062'] ?? 75}/kg</strong>
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-white bg-surface border border-[#DDD6C8] border-subtle text-primary text-primary">
+              SS 304L: <strong className="text-[#3D6353] text-success">₹{activeRates?.material_rates?.['SS 304L'] ?? 280}/kg</strong>
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-white bg-surface border border-[#DDD6C8] border-subtle text-primary text-primary">
+              SS 410: <strong className="text-[#3D6353] text-success">₹{activeRates?.material_rates?.['SS 410'] ?? 185}/kg</strong>
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-white bg-surface border border-[#DDD6C8] border-subtle text-primary text-primary">
+              EN8: <strong className="text-[#3D6353] text-success">₹{activeRates?.material_rates?.['EN8'] ?? 85}/kg</strong>
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-white bg-surface border border-[#DDD6C8] border-subtle text-primary text-primary">
+              Fab Rate: <strong className="text-[#3D6353] text-success">₹{activeRates?.fabrication_rate_per_kg ?? 45}/kg</strong>
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-[#EEF5F1] bg-success-bg border border-[#C5DED0] border-success text-[#1E3B2F] text-success font-bold">
+              Markup: {markupMultiplier.toFixed(2)}x (10%)
+            </span>
+            {isAdmin && (
+              <a
+                href="/rates"
+                className="ml-2 inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-[#3D6353] hover:bg-[#2F5241] text-white text-[11px] font-sans font-bold shadow-xs transition-colors"
+                title="Go to Cost and Rate Master to configure rates"
+              >
+                Cost & Rate Master ↗
+              </a>
+            )}
           </div>
         </div>
-
 
 
       {/* 2D Engineering Design Blueprint Uploader & Component Suggester */}
@@ -3752,308 +4201,317 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
         currentProductCategory={productCategory}
       />
 
-      {/* Engineering Formula Inspector & Error/Tolerance Allowance Engine */}
-      <FormulaInspector
-        formulas={customFormulas}
-        onUpdateFormula={handleUpdateFormula}
-        onResetFormulas={handleResetFormulas}
-        densityMultiplier={densityMultiplier}
-        setDensityMultiplier={setDensityMultiplier}
-        cuttingTolerancePct={cuttingTolerancePct}
-        setCuttingTolerancePct={setCuttingTolerancePct}
-        labourDivisor={labourDivisor}
-        setLabourDivisor={setLabourDivisor}
-        finishingRatePerKg={finishingRatePerKg}
-        setFinishingRatePerKg={setFinishingRatePerKg}
-        fabricationRatePerKg={fabricationRatePerKg}
-        setFabricationRatePerKg={setFabricationRatePerKg}
-        activeRates={activeRates}
-        isMultiBlade={isMultiBlade}
-        isValveMode={isValveMode}
-      />
+      {/* Engineering Formula Inspector & Error/Tolerance Allowance Engine (Admin Only) */}
+      {isAdmin && (
+        <FormulaInspector
+          formulas={customFormulas}
+          onUpdateFormula={handleUpdateFormula}
+          onResetFormulas={handleResetFormulas}
+          densityMultiplier={densityMultiplier}
+          setDensityMultiplier={setDensityMultiplier}
+          cuttingTolerancePct={cuttingTolerancePct}
+          setCuttingTolerancePct={setCuttingTolerancePct}
+          labourDivisor={labourDivisor}
+          setLabourDivisor={setLabourDivisor}
+          finishingRatePerKg={finishingRatePerKg}
+          setFinishingRatePerKg={setFinishingRatePerKg}
+          fabricationRatePerKg={fabricationRatePerKg}
+          setFabricationRatePerKg={setFabricationRatePerKg}
+          activeRates={activeRates}
+          isMultiBlade={isMultiBlade}
+          isValveMode={isValveMode}
+        />
+      )}
+
+      {/* Quotation Team Member Info Banner */}
+      {!isAdmin && (
+        <div className="p-4 bg-gradient-to-r from-[#EFF6FF] via-[#F0FDF4] to-[#FAF7F2] border border-blue-200 rounded-2xl flex items-start gap-3 shadow-xs">
+          <div className="p-2 rounded-xl bg-blue-100 text-blue-800 shrink-0 mt-0.5">
+            <Calculator className="w-5 h-5" />
+          </div>
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="font-extrabold text-blue-950 text-xs sm:text-sm">
+                Quotation Team Mode: Live Proportional Part Pricing Active
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-200/80 text-blue-900 border border-blue-300">
+                Member View
+              </span>
+            </div>
+            <p className="text-xs text-[#3E4D45] leading-relaxed">
+              You can modify all damper dimensions (width, height, depth, thickness), blade parameters, and actuators freely above. Any change made directly recalculates all 45 part weights, dimensional schedules, and proportional prices in real time. Base raw material unit rates and profit markups are securely managed in Admin.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* TABLE 1: Complete 45-Part Fabricated Bill of Materials (Exact replicate of PDF pages 1, 3, 5) */}
-      <div className="bg-[#FFFDFB] border border-[#E8E3D8] rounded-2xl shadow-sm overflow-hidden space-y-0">
-        <div className="bg-gradient-to-r from-[#2F4D40] via-[#3D6353] to-[#487361] text-white px-5 py-3 flex items-center justify-between">
+      <div id="fabricated-parts-table" className="bg-[#FFFDFB] bg-surface border border-subtle border-subtle rounded-2xl shadow-sm overflow-hidden space-y-0">
+        <div className="bg-gradient-to-r from-[#2F4D40] via-[#3D6353] to-[#487361]    text-white px-5 py-3 flex items-center justify-between border-b border-subtle">
           <div className="flex items-center gap-2 font-bold text-xs sm:text-sm uppercase tracking-wide">
-            <span>4. Fabricated Parts Cost Sheet ({currentDamperType.id === 'rack-pinion' ? 'All 45 Parts Certified Schedule' : `${currentDamperType.shortName} Proportional Schedule`})</span>
-          </div>
-          <div className="text-[11px] text-[#D5E5DC] font-mono">
-            {displayLines.length} Items Configured • Rates & Formulas Editable Inline
-          </div>
-          <button type="button" onClick={addCustomBomLine} className="inline-flex items-center gap-1 rounded border border-white/40 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-white/10 transition-colors"><Plus size={14} /> Add custom line</button>
-        </div>
-
-        {/* Live Active Formulas Status Bar */}
-        <div className="bg-[#F5F2EB] border-b border-[#E8E3D8] px-5 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-bold text-[#242826] flex items-center gap-1">
-              <Calculator className="w-3.5 h-3.5 text-[#3D6353]" />
-              Active Cost Formulas:
-            </span>
-            <span className="bg-white px-2 py-0.5 rounded border border-[#E0D9CC] font-mono text-[11px] text-[#242826] shadow-sm" title="Plate Weight Formula">
-              Plate Wt: <strong className="text-[#3D6353]">{customFormulas.plateWeight}</strong>
-            </span>
-            <span className="bg-white px-2 py-0.5 rounded border border-[#E0D9CC] font-mono text-[11px] text-[#242826] shadow-sm" title="Raw Material Cost Formula">
-              RM: <strong className="text-[#2F5241]">{customFormulas.rawMaterial}</strong>
-            </span>
-            <span className="bg-white px-2 py-0.5 rounded border border-[#E0D9CC] font-mono text-[11px] text-[#242826] shadow-sm" title="Machining & Labour Formula">
-              Labour/Mfg: <strong className="text-[#8C5D19]">{customFormulas.machiningLabour}</strong>
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {isCustomFormulasActive && (
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-[#FEF7EB] text-[#8C5D19] border border-[#F3DACF] flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#C46346] animate-pulse"></span>
-                Customized Formulas Applied
+            <span>4. Fabricated Parts {isAdmin ? 'Cost Sheet (All 45 Parts Confidential Cost Schedule)' : 'Schedule (Engineering Dimensions & Proportional BOM)'}</span>
+            {selectedCadPartKey && CAD_PART_BOM_MAP[selectedCadPartKey] && (
+              <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                🎯 3D Filter: {CAD_PART_BOM_MAP[selectedCadPartKey].name.split(' ')[0]} ({CAD_PART_BOM_MAP[selectedCadPartKey].bomSrNos.length} parts)
               </span>
             )}
-            {isCustomFormulasActive && (
-              <button
-                type="button"
-                onClick={handleResetFormulas}
-                className="text-[11px] text-[#C46346] hover:text-[#9A3B22] font-semibold flex items-center gap-1 bg-[#FDF1EB] hover:bg-[#FBE4D8] px-2 py-0.5 rounded border border-[#F3DACF] transition-colors"
-                title="Reset formulas to factory certified standard"
-              >
-                <RotateCcw className="w-3 h-3" />
-                Reset Formulas
-              </button>
-            )}
           </div>
+          <div className="text-[11px] text-[#D5E5DC] text-muted font-mono">
+            {displayLines.length} Items Configured • {isAdmin ? 'Rates & Line Totals Active' : 'Automatic Proportional Sizing Active'}
+          </div>
+          <button type="button" onClick={addCustomBomLine} className="inline-flex items-center gap-1 rounded border border-white/40 border-subtle px-2.5 py-1.5 text-xs font-bold text-white hover:bg-white/10 hover:bg-elevated/70 transition-colors"><Plus size={14} /> Add custom line</button>
         </div>
 
-        {calcResult?.validation_warnings?.length > 0 && <div className="space-y-1 border-b border-[#F3DACF] bg-[#FEF7EB] px-4 py-2 text-xs text-[#8C5D19]">
+        {/* Live Proportional Synchronized Alert Banner */}
+        {proportionalNotice && (
+          <div className="bg-[#EAF5EF] bg-elevated border-b border-[#C5E2D2] border-subtle px-5 py-2.5 flex items-center justify-between text-xs text-[#224433] text-success">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#3D6353] bg-success animate-ping" />
+              <span className="font-bold">⚡ Proportional Dimension Synchronized:</span>
+              <span>
+                Part {proportionalNotice.sourceSrNo} ({proportionalNotice.sourceName}) updated → Automatically adjusted {proportionalNotice.correlated.join(' & ')} with real-time recalculation of weights and prices.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setProportionalNotice(null)}
+              className="text-[#2F4D40] text-success hover:underline font-bold text-xs"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {/* Live Active Formulas Status Bar (Only shown when customized formulas are applied) */}
+        {isCustomFormulasActive && (
+          <div className="bg-[#FEF7EB] bg-warning-bg border-b border-[#F3DACF] border-warning px-5 py-2 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-bold text-[#8C5D19] text-warning flex items-center gap-1">
+                <Calculator className="w-3.5 h-3.5 text-[#C46346] animate-pulse" />
+                Custom Formulas Active:
+              </span>
+              <span className="bg-white bg-surface px-2 py-0.5 rounded border border-[#DDD6C8] border-subtle font-mono text-[11px] text-primary text-primary">
+                Plate Wt: <strong>{customFormulas.plateWeight}</strong>
+              </span>
+              <span className="bg-white bg-surface px-2 py-0.5 rounded border border-[#DDD6C8] border-subtle font-mono text-[11px] text-primary text-primary">
+                RM: <strong>{customFormulas.rawMaterial}</strong>
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleResetFormulas}
+              className="text-[11px] text-[#C46346] hover:text-[#9A3B22] font-semibold flex items-center gap-1 bg-[#FDF1EB] bg-elevated px-2 py-0.5 rounded border border-[#F3DACF] transition-colors"
+            >
+              <RotateCcw className="w-3 h-3" />
+              Reset to Factory Standard
+            </button>
+          </div>
+        )}
+
+        {calcResult?.validation_warnings?.length > 0 && <div className="space-y-1 border-b border-[#F3DACF] border-warning bg-[#FEF7EB] bg-warning-bg px-4 py-2 text-xs text-[#8C5D19] text-warning">
           {calcResult.validation_warnings.map((warning) => <p key={warning.rule_id} className="flex items-center gap-2"><AlertTriangle size={14} />{warning.message}</p>)}
         </div>}
 
-        {bomAdditions.length > 0 && <div className="space-y-2 border-b border-[#E8E3D8] bg-[#FAF7F2] p-3">
-          {bomAdditions.map((line, index) => <div key={index} className="grid grid-cols-2 gap-2 sm:grid-cols-5 lg:grid-cols-9">
+        {bomAdditions.length > 0 && <div className="space-y-2 border-b border-subtle border-subtle bg-elevated bg-elevated p-3">
+          {bomAdditions.map((line, index) => <div key={index} className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7 items-end">
             {[
               ['part_name', 'Part name', 'text'], ['dim_1', 'Dim 1 mm', 'number'], ['dim_2', 'Dim 2 mm', 'number'],
               ['dim_3', 'Thickness mm', 'number'], ['qty', 'Qty', 'number'], ['moc', 'MOC', 'text'],
-              ['material_rate', 'Rate/kg', 'number'], ['per_piece_machining', 'Machining', 'number'],
-            ].map(([key, label, type]) => <label key={key} className="text-[10px] font-semibold uppercase text-[#5C6460]">{label}<input type={type} className="mt-1 w-full rounded border border-[#DDD6C8] bg-white px-2 py-1.5 text-xs focus:border-[#3D6353] focus:outline-none" value={line[key]} min={type === 'number' ? 0 : undefined} onChange={(event) => setBomAdditions((current) => current.map((item, i) => i === index ? { ...item, [key]: type === 'number' ? Number(event.target.value) : event.target.value } : item))} /></label>)}
-            <button type="button" aria-label={`Remove ${line.part_name}`} title="Remove custom line" className="self-end rounded border border-[#DDD6C8] bg-white p-2 text-[#5C6460] hover:bg-[#FDF1EB] hover:text-[#C46346]" onClick={() => setBomAdditions((current) => current.filter((_, i) => i !== index))}><Trash2 size={15} /></button>
+            ].map(([key, label, type]) => <label key={key} className="text-[10px] font-semibold uppercase text-secondary text-muted">{label}<input type={type} className="mt-1 w-full rounded border border-[#DDD6C8] border-subtle bg-white bg-surface px-2 py-1.5 text-xs text-slate-800 text-primary focus:border-[#3D6353] focus:outline-none" value={line[key]} min={type === 'number' ? 0 : undefined} onChange={(event) => setBomAdditions((current) => current.map((item, i) => i === index ? { ...item, [key]: type === 'number' ? Number(event.target.value) : event.target.value } : item))} /></label>)}
+            <button type="button" aria-label={`Remove ${line.part_name}`} title="Remove custom line" className="self-end rounded border border-[#DDD6C8] border-subtle bg-white bg-surface p-2 text-secondary text-muted hover:bg-[#FDF1EB] hover:bg-elevated/70 hover:text-[#C46346]" onClick={() => setBomAdditions((current) => current.filter((_, i) => i !== index))}><Trash2 size={15} /></button>
           </div>)}
         </div>}
 
         <div className="overflow-x-auto max-h-[620px]">
           <table className="w-full text-left text-xs border-collapse">
-            <thead className="sticky top-0 bg-[#284136] text-white uppercase text-[10px] font-semibold tracking-wider z-10">
+            <thead className="sticky top-0 bg-[#284136] bg-elevated text-white uppercase text-[10px] font-semibold tracking-wider z-10">
               <tr>
-                <th className="px-2.5 py-2 text-center w-10 border border-[#3A5649]">Sr.No</th>
-                <th className="px-3 py-2 border border-[#3A5649]">Part Name</th>
-                <th className="px-2 py-2 text-center border border-[#3A5649]" colSpan="3">SHEET SIZE / DIM</th>
-                <th className="px-2 py-2 text-center w-12 border border-[#3A5649]">Qty</th>
-                <th className="px-2.5 py-2 text-right border border-[#3A5649]">Total Wt (kg)</th>
-                <th className="px-2.5 py-2 text-center border border-[#3A5649]">MOC</th>
-                <th className="px-2.5 py-2 text-right border border-[#3A5649] w-24 bg-[#23382F]">Rate (₹/kg)</th>
-                <th className="px-3 py-2 text-right border border-[#3A5649]">RM Cost (₹)</th>
-                <th className="px-2.5 py-2 text-right border border-[#3A5649] w-20 bg-[#23382F]">LC Rate</th>
-                <th className="px-2.5 py-2 text-right border border-[#3A5649]">LC (₹)</th>
-                <th className="px-2 py-2 text-right border border-[#3A5649] w-14">RC (₹)</th>
-                <th className="px-2.5 py-2 text-right border border-[#3A5649] w-20 bg-[#23382F]">MC (₹)</th>
-                <th className="px-3 py-2 text-right border border-[#3A5649] bg-[#1F332A]">TOTAL MC (₹)</th>
-                <th className="px-2.5 py-2 text-right border border-[#3A5649] w-24 bg-[#563428]">± Error (₹)</th>
-                <th className="px-3 py-2 text-right border border-[#3A5649] bg-[#1F332A]">Line Total (₹)</th>
-                <th className="px-2.5 py-2 text-center border border-[#3A5649]">Remove</th>
-              </tr>
-              <tr className="bg-[#314E42] text-[9px] text-[#D0E2D8] font-normal">
-                <th className="border border-[#3A5649]"></th>
-                <th className="border border-[#3A5649]"></th>
-                <th className="px-1 py-1 text-center border border-[#3A5649]">L / DIA</th>
-                <th className="px-1 py-1 text-center border border-[#3A5649]">W / LENG</th>
-                <th className="px-1 py-1 text-center border border-[#3A5649]">T</th>
-                <th className="border border-[#3A5649]"></th>
-                <th className="border border-[#3A5649]"></th>
-                <th className="border border-[#3A5649]"></th>
-                <th className="border border-[#3A5649] text-center">Editable</th>
-                <th className="border border-[#3A5649]"></th>
-                <th className="border border-[#3A5649] text-center">Editable</th>
-                <th className="border border-[#3A5649]"></th>
-                <th className="border border-[#3A5649]"></th>
-                <th className="border border-[#3A5649] text-center">Editable</th>
-                <th className="border border-[#3A5649]"></th>
-                <th className="border border-[#3A5649] text-center font-bold text-[#FCD9A5]">Editable (±)</th>
-                <th className="border border-[#3A5649]"></th>
-                <th className="border border-[#3A5649] text-center">Action</th>
+                <th className="px-2.5 py-2.5 text-center w-14 border border-[#3A5649] border-subtle">Sr.No</th>
+                <th className="px-3 py-2.5 border border-[#3A5649] border-subtle">Part Name</th>
+                <th className="px-2 py-2.5 text-center border border-[#3A5649] border-subtle w-20">L / DIA (mm)</th>
+                <th className="px-2 py-2.5 text-center border border-[#3A5649] border-subtle w-20">W / LENG (mm)</th>
+                <th className="px-2 py-2.5 text-center border border-[#3A5649] border-subtle w-16">T (mm)</th>
+                <th className="px-2 py-2.5 text-center w-14 border border-[#3A5649] border-subtle">Qty</th>
+                <th className="px-2.5 py-2.5 text-right border border-[#3A5649] border-subtle w-24">Total Wt (kg)</th>
+                <th className="px-2.5 py-2.5 text-center border border-[#3A5649] border-subtle w-24">MOC</th>
+                <th className="px-2.5 py-2.5 text-right border border-[#3A5649] border-subtle w-24 bg-[#23382F] bg-elevated">Rate (₹/kg)</th>
+                <th className="px-3 py-2.5 text-right border border-[#3A5649] border-subtle w-28">RM Cost (₹)</th>
+                <th className="px-3 py-2.5 text-right border border-[#3A5649] border-subtle bg-[#1F332A] bg-surface w-28">Line Total (₹)</th>
+                <th className="px-2.5 py-2.5 text-center border border-[#3A5649] border-subtle w-14">Action</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#EAE5DB] text-[#242826] font-sans">
+            <tbody className="divide-y divide-[#EAE5DB] divide-subtle text-primary text-primary font-sans">
               {displayLines.map((l, index) => {
                 const lineIndex = l.source_line_index ?? index;
                 const edit = manualBomEdits[lineIndex] || {};
+                const isHighlightedByCad = CAD_PART_BOM_MAP[selectedCadPartKey]?.bomSrNos.includes(Number(l.sr_no));
+                const cadPartKeyForThisRow = getCadKeyFromSrNo(l.sr_no);
                 return (
                 <tr 
                   key={`${lineIndex}-${l.sr_no ?? index}`} 
-                  className={`hover:bg-[#EEF5F1] transition-colors ${index % 2 === 0 ? 'bg-[#FFFDFB]' : 'bg-[#FAF7F2]'}`}
+                  id={`bom-row-${l.sr_no}`}
+                  className={`transition-colors ${
+                    isHighlightedByCad 
+                      ? 'ring-2 ring-emerald-500 bg-emerald-50/80 bg-success-bg shadow-xs' 
+                      : index % 2 === 0 ? 'bg-[#FFFDFB] bg-surface' : 'bg-elevated bg-elevated'
+                  } hover:bg-[#EEF5F1] hover:bg-elevated/70/60`}
                 >
-                  <td className="px-2 py-1.5 text-center font-mono text-[#5C6460] font-medium border-r border-[#EAE5DB]">
-                    {l.sr_no}
-                  </td>
-                  <td className="px-3 py-1.5 font-medium text-slate-900 border-r border-slate-200">
-                    {l.part_name} {(l.is_manually_edited || edit.edit_note) && <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold uppercase text-amber-800">Edited</span>}
-                  </td>
-                  {/* Dimensions L, W, T */}
-                  <td className="px-1.5 py-1.5 text-right font-mono text-slate-700 border-r border-slate-200">
-                    <input aria-label={`${l.part_name} dimension 1`} className="w-20 border border-transparent bg-transparent px-1 text-right hover:border-slate-300 focus:border-blue-500 focus:bg-white" type="number" min="0" value={edit.dim_1 ?? l.dim1} onChange={(e) => updateBomField(lineIndex, 'dim_1', readNumber(e.target.value, 0))} />
-                  </td>
-                  <td className="px-1.5 py-1.5 text-right font-mono text-slate-700 border-r border-slate-200">
-                    <input aria-label={`${l.part_name} dimension 2`} className="w-20 border border-transparent bg-transparent px-1 text-right hover:border-slate-300 focus:border-blue-500 focus:bg-white" type="number" min="0" value={edit.dim_2 ?? l.dim2} onChange={(e) => updateBomField(lineIndex, 'dim_2', readNumber(e.target.value, 0))} />
-                  </td>
-                  <td className="px-1.5 py-1.5 text-right font-mono text-slate-700 border-r border-slate-200">
-                    {l.is_round ? '-' : <input aria-label={`${l.part_name} thickness`} className="w-14 border border-transparent bg-transparent px-1 text-right hover:border-slate-300 focus:border-blue-500 focus:bg-white" type="number" min="0" value={edit.dim_3 ?? l.dim3} onChange={(e) => updateBomField(lineIndex, 'dim_3', readNumber(e.target.value, 0))} />}
-                  </td>
-                  <td className="px-2 py-1.5 text-center font-mono font-bold text-slate-900 border-r border-slate-200">
-                    <input aria-label={`${l.part_name} quantity`} className="w-12 border border-transparent bg-transparent text-center hover:border-slate-300 focus:border-blue-500 focus:bg-white" type="number" min="1" step="1" value={edit.qty ?? l.quantity} onChange={(e) => updateBomField(lineIndex, 'qty', Math.max(1, readNumber(e.target.value, 1)))} />
-                  </td>
-                  <td className="px-2.5 py-1.5 text-right font-mono font-medium text-slate-800 border-r border-slate-200">
-                    {(Number(l.total_weight) || 0).toFixed(1)}
-                  </td>
-                  <td className="px-2.5 py-1.5 text-center font-mono text-[11px] text-slate-700 border-r border-slate-200">
-                    <input aria-label={`${l.part_name} material`} className="w-20 border border-transparent bg-transparent text-center hover:border-slate-300 focus:border-blue-500 focus:bg-white" value={edit.moc ?? l.moc} onChange={(e) => updateBomField(lineIndex, 'moc', e.target.value)} />
+                  {/* 1. Sr.No + 3D Target Button */}
+                  <td className="px-2 py-1.5 text-center font-mono text-secondary text-muted font-medium border-r border-subtle border-subtle">
+                    <div className="flex items-center justify-center gap-1">
+                      <span>{l.sr_no}</span>
+                      {cadPartKeyForThisRow && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedCadPartKey(cadPartKeyForThisRow);
+                            setShow3DViewer(true);
+                            document.getElementById('cad-viewer-section')?.scrollIntoView({ behavior: 'smooth' });
+                          }}
+                          title={`Focus "${l.part_name}" in 3D CAD model`}
+                          className={`px-1 py-0.5 rounded text-[10px] font-bold transition-all ${
+                            selectedCadPartKey === cadPartKeyForThisRow
+                              ? 'bg-emerald-500 text-white shadow-xs ring-1 ring-emerald-400'
+                              : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 hover:bg-elevated/70'
+                          }`}
+                        >
+                          🎯 3D
+                        </button>
+                      )}
+                    </div>
                   </td>
 
-                  {/* EDITABLE RATE (Rs/kg) */}
-                  <td className="px-1.5 py-1 text-right border-r border-slate-200 bg-amber-50/30">
-                    <input
-                      type="number"
-                      step="1"
-                      min="0"
-                      aria-label={`${l.part_name} rate per kg`}
-                      value={edit.material_rate ?? l.active_mat_rate}
-                      onChange={(e) => {
-                        const val = readNumber(e.target.value, 0);
-                        updateBomField(lineIndex, 'material_rate', val);
-                        setLineRateOverrides((p) => ({ ...p, [l.sr_no]: val }));
-                      }}
-                      className="w-20 px-1.5 py-0.5 text-right font-mono text-xs font-bold border border-slate-300 rounded bg-white text-slate-900 focus:ring-1 focus:ring-blue-600"
+                  {/* 2. Part Name */}
+                  <td className="px-3 py-1.5 font-medium text-slate-900 text-primary border-r border-subtle border-subtle">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span>{l.part_name}</span>
+                      {isHighlightedByCad && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800 bg-success-bg text-success ring-1 ring-emerald-400">
+                          🎯 3D Active
+                        </span>
+                      )}
+                    </div>
+                  </td>
+
+                  {/* 3. L / DIA (mm) */}
+                  <td className="px-1.5 py-1.5 text-right font-mono text-slate-700 text-secondary border-r border-subtle border-subtle">
+                    <input 
+                      aria-label={`${l.part_name} dimension 1`} 
+                      className="w-16 border border-slate-200 border-subtle rounded px-1.5 py-0.5 text-right hover:border-strong focus:border-focus-ring bg-surface text-primary" 
+                      type="number" 
+                      min="0" 
+                      value={edit.dim_1 ?? l.dim1} 
+                      onChange={(e) => updateBomField(lineIndex, 'dim_1', readNumber(e.target.value, 0))} 
                     />
                   </td>
 
-                  {/* RM COST */}
-                  <td className="px-3 py-1.5 text-right font-mono font-semibold text-slate-900 border-r border-slate-200">
-                    {formatNumber(l.active_rm_cost, 0)}
+                  {/* 4. W / LENG (mm) */}
+                  <td className="px-1.5 py-1.5 text-right font-mono text-slate-700 text-secondary border-r border-subtle border-subtle">
+                    <input 
+                      aria-label={`${l.part_name} dimension 2`} 
+                      className="w-16 border border-slate-200 border-subtle rounded px-1.5 py-0.5 text-right hover:border-strong focus:border-focus-ring bg-surface text-primary" 
+                      type="number" 
+                      min="0" 
+                      value={edit.dim_2 ?? l.dim2} 
+                      onChange={(e) => updateBomField(lineIndex, 'dim_2', readNumber(e.target.value, 0))} 
+                    />
                   </td>
 
-                  {/* EDITABLE LC RATE */}
-                  <td className="px-1.5 py-1 text-right border-r border-slate-200">
+                  {/* 5. T (mm) */}
+                  <td className="px-1.5 py-1.5 text-right font-mono text-slate-700 text-secondary border-r border-subtle border-subtle">
                     {l.is_round ? (
-                      <span className="text-slate-400 font-mono">-</span>
+                      <span className="text-slate-400 text-muted font-mono">-</span>
                     ) : (
-                      <input
-                        type="number"
-                        step="0.5"
-                        min="0"
-                        aria-label={`${l.part_name} labour rate`}
-                        value={edit.plate_labour_rate ?? l.active_lc_rate}
-                        onChange={(e) => {
-                          const val = readNumber(e.target.value, 0);
-                          updateBomField(lineIndex, 'plate_labour_rate', val);
-                          setLineLcRateOverrides((p) => ({ ...p, [l.sr_no]: val }));
-                        }}
-                        className="w-16 px-1.5 py-0.5 text-right font-mono text-xs border border-slate-300 rounded bg-white text-slate-800 focus:ring-1 focus:ring-blue-600"
+                      <input 
+                        aria-label={`${l.part_name} thickness`} 
+                        className="w-12 border border-slate-200 border-subtle rounded px-1.5 py-0.5 text-right hover:border-strong focus:border-focus-ring bg-surface text-primary" 
+                        type="number" 
+                        min="0" 
+                        value={edit.dim_3 ?? l.dim3} 
+                        onChange={(e) => updateBomField(lineIndex, 'dim_3', readNumber(e.target.value, 0))} 
                       />
                     )}
                   </td>
 
-                  {/* LC COST */}
-                  <td className="px-2.5 py-1.5 text-right font-mono text-slate-700 border-r border-slate-200">
-                    {formatNumber(l.active_lc_cost, 0)}
-                  </td>
-
-                  {/* ROLLING RC */}
-                  <td className="px-2 py-1.5 text-right font-mono text-slate-500 border-r border-slate-200">
-                    {l.rolling_cost || 0}
-                  </td>
-
-                  {/* EDITABLE MC (Machining Cost per pc) */}
-                  <td className="px-1.5 py-1 text-right border-r border-slate-200 bg-amber-50/30">
-                    <input
-                      type="number"
-                      step="10"
-                      min="0"
-                      aria-label={`${l.part_name} machining cost`}
-                      value={edit.per_piece_machining ?? l.active_mc}
-                      onChange={(e) => {
-                        const val = readNumber(e.target.value, 0);
-                        updateBomField(lineIndex, 'per_piece_machining', val);
-                        setLineMcOverrides((p) => ({ ...p, [l.sr_no]: val }));
-                      }}
-                      className="w-16 px-1.5 py-0.5 text-right font-mono text-xs border border-slate-300 rounded bg-white text-slate-900 focus:ring-1 focus:ring-blue-600"
+                  {/* 6. Qty */}
+                  <td className="px-2 py-1.5 text-center font-mono font-bold text-slate-900 text-primary border-r border-subtle border-subtle">
+                    <input 
+                      aria-label={`${l.part_name} quantity`} 
+                      className="w-12 border border-slate-200 border-subtle rounded px-1 py-0.5 text-center hover:border-strong focus:border-focus-ring bg-surface text-primary" 
+                      type="number" 
+                      min="1" 
+                      step="1" 
+                      value={edit.qty ?? l.quantity} 
+                      onChange={(e) => updateBomField(lineIndex, 'qty', Math.max(1, readNumber(e.target.value, 1)))} 
                     />
                   </td>
 
-                  {/* TOTAL MC */}
-                  <td className="px-3 py-1.5 text-right font-mono font-semibold text-slate-900 border-r border-slate-200 bg-slate-50/60">
-                    {formatNumber(l.active_total_mc, 0)}
+                  {/* 7. Total Wt (kg) */}
+                  <td className="px-2.5 py-1.5 text-right font-mono font-semibold text-slate-800 text-primary border-r border-subtle border-subtle">
+                    {(Number(l.total_weight) || 0).toFixed(1)}
                   </td>
 
-                  {/* EDITABLE ERROR / TOLERANCE ALLOWANCE (±₹) */}
-                  <td className="px-1.5 py-1 text-right border-r border-slate-200 bg-amber-50/50">
-                    <input
-                      type="number"
-                      step="50"
-                      aria-label={`${l.part_name} error tolerance allowance`}
-                      placeholder="±0"
-                      value={edit.error_allowance ?? (lineErrorOverrides[l.sr_no] ?? '')}
-                      onChange={(e) => {
-                        const val = e.target.value === '' ? 0 : Number(e.target.value);
-                        updateBomField(lineIndex, 'error_allowance', val);
-                        setLineErrorOverrides((p) => ({ ...p, [l.sr_no]: val }));
-                      }}
-                      className="w-20 px-1.5 py-0.5 text-right font-mono text-xs font-bold border border-amber-300 rounded bg-white text-amber-900 focus:ring-1 focus:ring-amber-500"
+                  {/* 8. MOC */}
+                  <td className="px-2.5 py-1.5 text-center font-mono text-[11px] text-slate-700 text-secondary border-r border-subtle border-subtle">
+                    <input 
+                      aria-label={`${l.part_name} material`} 
+                      className="w-20 border border-slate-200 border-subtle rounded px-1.5 py-0.5 text-center hover:border-strong focus:border-focus-ring bg-surface text-primary" 
+                      value={edit.moc ?? l.moc} 
+                      onChange={(e) => updateBomField(lineIndex, 'moc', e.target.value)} 
                     />
                   </td>
 
-                  {/* LINE TOTAL */}
-                  <td className="px-1.5 py-1 text-right font-mono font-bold text-blue-950 bg-amber-50/40">
-                    <input
-                      type="number"
-                      step="1"
-                      min="0"
-                      aria-label={`${l.part_name} line total`}
-                      value={edit.line_total ?? Math.round(Number(l.active_line_total) || 0)}
-                      onChange={(e) => updateBomField(lineIndex, 'line_total', readNumber(e.target.value, 0))}
-                      className="w-24 px-1.5 py-0.5 text-right font-mono text-xs font-bold border border-slate-300 rounded bg-white text-blue-950 focus:ring-1 focus:ring-blue-600"
-                    />
+                  {/* 9. Rate (₹/kg) - Strictly read-only from Cost & Rate Master */}
+                  <td className="px-2.5 py-2 text-right font-mono text-xs font-semibold text-slate-800 text-primary border-r border-subtle border-subtle bg-elevated/60 bg-elevated/50">
+                    ₹{formatNumber(l.active_mat_rate, 0)}/kg
                   </td>
-                  <td className="px-2 py-1 text-center"><button type="button" title={`Remove ${l.part_name}`} aria-label={`Remove ${l.part_name}`} className="rounded p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-700" onClick={() => updateBomField(lineIndex, 'is_delete', true)}><Trash2 size={14} /></button></td>
+
+                  {/* 10. RM Cost (₹) - Strictly read-only */}
+                  <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-slate-800 text-primary border-r border-subtle border-subtle">
+                    ₹{formatNumber(l.active_rm_cost, 0)}
+                  </td>
+
+                  {/* 11. Line Total (₹) - Strictly read-only */}
+                  <td className="px-3 py-2 text-right font-mono text-xs font-bold text-emerald-900 text-success border-r border-subtle border-subtle bg-emerald-50/40 bg-success-bg">
+                    ₹{formatNumber(l.active_line_total, 0)}
+                  </td>
+
+                  {/* 12. Action */}
+                  <td className="px-2 py-1 text-center">
+                    <button 
+                      type="button" 
+                      title={`Remove ${l.part_name}`} 
+                      aria-label={`Remove ${l.part_name}`} 
+                      className="rounded p-1 text-slate-400 hover:text-red-600 hover:text-error hover:bg-error-bg transition-colors" 
+                      onClick={() => updateBomField(lineIndex, 'is_delete', true)}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </td>
                 </tr>
               )})}
             </tbody>
 
-            {/* Subtotal Footer Row Matching Excel Sheet */}
-            <tfoot className="bg-slate-200 text-slate-900 font-bold border-t-2 border-slate-400 text-xs">
+            {/* Clean Subtotal Footer Row Matching Required Columns */}
+            <tfoot className="bg-slate-100 bg-elevated text-slate-900 text-primary font-bold border-t-2 border-slate-300 border-subtle text-xs">
               <tr>
-                <td colSpan="6" className="px-4 py-2.5 text-right uppercase tracking-wider text-slate-700">
+                <td colSpan="6" className="px-4 py-2.5 text-right uppercase tracking-wider text-slate-700 text-secondary">
                   Total Fabricated Damper Weight:
                 </td>
-                <td className="px-2.5 py-2.5 text-right font-mono text-sm text-blue-900 bg-blue-50/80 border-r border-slate-300">
+                <td className="px-2.5 py-2.5 text-right font-mono text-sm text-emerald-900 text-success bg-emerald-50/80 bg-success-bg border-r border-slate-300 border-subtle">
                   {formatWeight(totalWeight)}
                 </td>
-                <td className="px-2 py-2.5 text-right uppercase text-slate-700">
+                <td className="border-r border-slate-300 border-subtle"></td>
+                <td className="px-2 py-2.5 text-right uppercase text-slate-600 text-muted border-r border-slate-300 border-subtle text-[11px]">
                   Total RM:
                 </td>
-                <td className="border-r border-slate-300"></td>
-                <td className="px-3 py-2.5 text-right font-mono text-sm text-blue-900 bg-blue-50/80 border-r border-slate-300">
+                <td className="px-3 py-2.5 text-right font-mono text-sm text-slate-900 text-primary bg-slate-200/60 bg-elevated/60 border-r border-slate-300 border-subtle">
                   ₹ {formatNumber(totalRmCost, 0)}
                 </td>
-                <td colSpan="4" className="px-2 py-2.5 text-right uppercase text-slate-700">
-                  Total MC Cost:
-                </td>
-                <td className="px-3 py-2.5 text-right font-mono text-sm text-blue-900 bg-blue-50/80 border-r border-slate-300">
-                  ₹ {formatNumber(totalMcCost, 0)}
-                </td>
-                <td className="px-2 py-2.5 text-center font-mono text-xs text-amber-900 bg-amber-100/60 border-r border-slate-300">
-                  {Object.values(lineErrorOverrides).reduce((a, b) => a + (Number(b) || 0), 0) !== 0 
-                    ? `± ₹ ${formatNumber(Object.values(lineErrorOverrides).reduce((a, b) => a + (Number(b) || 0), 0), 0)}` 
-                    : '-'}
-                </td>
-                <td className="px-3 py-2.5 text-right font-mono text-sm text-slate-900 bg-slate-300">
+                <td className="px-3 py-2.5 text-right font-mono text-sm font-black text-emerald-950 text-success bg-emerald-100/80 bg-success-bg border-r border-slate-300 border-subtle">
                   ₹ {formatNumber(sheetLineTotal, 0)}
                 </td>
+                <td className="px-2 py-2.5 text-center text-slate-400">-</td>
               </tr>
             </tfoot>
           </table>
@@ -4063,7 +4521,7 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
       {/* TABLES 2 & 3: Bought-Out Components & Automation Breakdown (Exact replicate of PDF Page 2) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Left Card: Bought-Out Components Table */}
-        <div className="bg-[#FFFDFB] border border-[#E8E3D8] rounded-2xl shadow-sm overflow-hidden flex flex-col justify-between">
+        <div className="bg-[#FFFDFB] border border-subtle rounded-2xl shadow-sm overflow-hidden flex flex-col justify-between">
           <div>
             <div className="bg-gradient-to-r from-[#2F4D40] via-[#3D6353] to-[#487361] text-white px-5 py-3 flex items-center justify-between">
               <span className="font-bold text-xs sm:text-sm uppercase tracking-wide">
@@ -4073,7 +4531,7 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
             </div>
 
             <table className="w-full text-xs text-left">
-              <thead className="bg-[#F5F2EB] text-[#5C6460] font-semibold uppercase text-[10px] border-b border-[#E8E3D8]">
+              <thead className="bg-[#F5F2EB] text-secondary font-semibold uppercase text-[10px] border-b border-subtle">
                 <tr>
                   <th className="px-3 py-2 w-12 text-center">Sr.No</th>
                   <th className="px-3 py-2">Description</th>
@@ -4174,14 +4632,8 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                     <td className="px-3 py-2 text-center font-mono text-slate-400">3</td>
                     <td className="px-3 py-2 font-medium">Rack (scaled with height)</td>
                     <td className="px-3 py-2 text-center font-mono font-bold text-blue-900">{rackQty}</td>
-                    <td className="px-3 py-1.5 text-right font-mono">
-                      <input
-                        type="number"
-                        step="500"
-                        value={rackRate}
-                        onChange={(e) => updateBoughtOutRate('rack_base', e.target.value)}
-                        className="w-24 px-1.5 py-0.5 text-right font-mono text-xs font-bold border border-slate-300 rounded bg-white"
-                      />
+                    <td className="px-3 py-1.5 text-right font-mono text-xs font-semibold text-slate-700 text-secondary">
+                      ₹{formatNumber(rackRate, 0)}
                     </td>
                     <td className="px-4 py-2 text-right font-mono font-semibold">{formatNumber(rackCost, 0)}</td>
                   </tr>
@@ -4190,14 +4642,8 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                     <td className="px-3 py-2 text-center font-mono text-slate-400">4</td>
                     <td className="px-3 py-2 font-medium">Drive Pinion</td>
                     <td className="px-3 py-2 text-center font-mono font-bold text-blue-900">{drivePinionQty}</td>
-                    <td className="px-3 py-1.5 text-right font-mono">
-                      <input
-                        type="number"
-                        step="500"
-                        value={drivePinionRate}
-                        onChange={(e) => updateBoughtOutRate('drive_pinion', e.target.value)}
-                        className="w-24 px-1.5 py-0.5 text-right font-mono text-xs font-bold border border-slate-300 rounded bg-white"
-                      />
+                    <td className="px-3 py-1.5 text-right font-mono text-xs font-semibold text-slate-700 text-secondary">
+                      ₹{formatNumber(drivePinionRate, 0)}
                     </td>
                     <td className="px-4 py-2 text-right font-mono font-semibold">{formatNumber(drivePinionCost, 0)}</td>
                   </tr>
@@ -4206,14 +4652,8 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                     <td className="px-3 py-2 text-center font-mono text-slate-400">5</td>
                     <td className="px-3 py-2 font-medium">Free Rotated Pinion</td>
                     <td className="px-3 py-2 text-center font-mono font-bold text-blue-900">{freePinionQty}</td>
-                    <td className="px-3 py-1.5 text-right font-mono">
-                      <input
-                        type="number"
-                        step="500"
-                        value={freePinionRate}
-                        onChange={(e) => updateBoughtOutRate('free_pinion', e.target.value)}
-                        className="w-24 px-1.5 py-0.5 text-right font-mono text-xs font-bold border border-slate-300 rounded bg-white"
-                      />
+                    <td className="px-3 py-1.5 text-right font-mono text-xs font-semibold text-slate-700 text-secondary">
+                      ₹{formatNumber(freePinionRate, 0)}
                     </td>
                     <td className="px-4 py-2 text-right font-mono font-semibold">{formatNumber(freePinionCost, 0)}</td>
                   </tr>
@@ -4222,14 +4662,8 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                     <td className="px-3 py-2 text-center font-mono text-slate-400">6</td>
                     <td className="px-3 py-2 font-medium">Bearing Cost</td>
                     <td className="px-3 py-2 text-center font-mono font-bold text-blue-900">{bearingQty}</td>
-                    <td className="px-3 py-1.5 text-right font-mono">
-                      <input
-                        type="number"
-                        step="500"
-                        value={bearingRate}
-                        onChange={(e) => updateBoughtOutRate('bearing', e.target.value)}
-                        className="w-24 px-1.5 py-0.5 text-right font-mono text-xs font-bold border border-slate-300 rounded bg-white"
-                      />
+                    <td className="px-3 py-1.5 text-right font-mono text-xs font-semibold text-slate-700 text-secondary">
+                      ₹{formatNumber(bearingRate, 0)}
                     </td>
                     <td className="px-4 py-2 text-right font-mono font-semibold">{formatNumber(bearingCost, 0)}</td>
                   </tr>
@@ -4238,14 +4672,8 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                     <td className="px-3 py-2 text-center font-mono text-slate-400">7</td>
                     <td className="px-3 py-2 font-medium">Hardware (lump sum)</td>
                     <td className="px-3 py-2 text-center font-mono text-slate-400">-</td>
-                    <td className="px-3 py-1.5 text-right font-mono">
-                      <input
-                        type="number"
-                        step="1000"
-                        value={hardwareCost}
-                        onChange={(e) => updateBoughtOutRate('hardware', e.target.value)}
-                        className="w-24 px-1.5 py-0.5 text-right font-mono text-xs font-bold border border-slate-300 rounded bg-white"
-                      />
+                    <td className="px-3 py-1.5 text-right font-mono text-xs font-semibold text-slate-700 text-secondary">
+                      ₹{formatNumber(hardwareCost, 0)}
                     </td>
                     <td className="px-4 py-2 text-right font-mono font-semibold">{formatNumber(hardwareCost, 0)}</td>
                   </tr>
@@ -4254,14 +4682,8 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                     <td className="px-3 py-2 text-center font-mono text-slate-400">8</td>
                     <td className="px-3 py-2 font-medium">Finishing Cost (₹/kg)</td>
                     <td className="px-3 py-2 text-center font-mono text-slate-500">{(Number(totalWeight) || 0).toFixed(1)}</td>
-                    <td className="px-3 py-1.5 text-right font-mono">
-                      <input
-                        type="number"
-                        step="1"
-                        value={finishingRate}
-                        onChange={(e) => setActiveRates({ ...activeRates, finishing_rate_per_kg: parseFloat(e.target.value) || 0 })}
-                        className="w-24 px-1.5 py-0.5 text-right font-mono text-xs font-bold border border-slate-300 rounded bg-white"
-                      />
+                    <td className="px-3 py-1.5 text-right font-mono text-xs font-semibold text-slate-700 text-secondary">
+                      ₹{finishingRate}/kg
                     </td>
                     <td className="px-4 py-2 text-right font-mono font-semibold">{formatNumber(finishingCost, 0)}</td>
                   </tr>
@@ -4270,14 +4692,8 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                     <td className="px-3 py-2 text-center font-mono text-slate-400">9</td>
                     <td className="px-3 py-2 font-medium">Gland packing</td>
                     <td className="px-3 py-2 text-center font-mono font-bold text-blue-900">{glandQty}</td>
-                    <td className="px-3 py-1.5 text-right font-mono">
-                      <input
-                        type="number"
-                        step="10"
-                        value={glandRate}
-                        onChange={(e) => updateBoughtOutRate('gland_packing_unit', e.target.value)}
-                        className="w-24 px-1.5 py-0.5 text-right font-mono text-xs font-bold border border-slate-300 rounded bg-white"
-                      />
+                    <td className="px-3 py-1.5 text-right font-mono text-xs font-semibold text-slate-700 text-secondary">
+                      ₹{formatNumber(glandRate, 0)}
                     </td>
                     <td className="px-4 py-2 text-right font-mono font-semibold">{formatNumber(glandCost, 0)}</td>
                   </tr>
@@ -4300,7 +4716,7 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
         {/* Right Card: Automation Breakdown & Commercial Totals */}
         <div className="space-y-6 flex flex-col justify-between">
           {/* Automation Table */}
-          <div className="bg-[#FFFDFB] border border-[#E8E3D8] rounded-2xl shadow-sm overflow-hidden flex flex-col justify-between">
+          <div className="bg-[#FFFDFB] border border-subtle rounded-2xl shadow-sm overflow-hidden flex flex-col justify-between">
             <div>
               <div className="bg-gradient-to-r from-[#2F4D40] via-[#3D6353] to-[#487361] text-white px-5 py-3 flex items-center justify-between">
                 <span className="font-bold text-xs sm:text-sm uppercase tracking-wide">
@@ -4310,7 +4726,7 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
               </div>
 
               <table className="w-full text-xs text-left">
-                <thead className="bg-[#F5F2EB] text-[#5C6460] font-semibold uppercase text-[10px] border-b border-[#E8E3D8]">
+                <thead className="bg-[#F5F2EB] text-secondary font-semibold uppercase text-[10px] border-b border-subtle">
                   <tr>
                     <th className="px-3 py-2 w-12 text-center">Sr.No</th>
                     <th className="px-3 py-2">Description</th>
@@ -4363,14 +4779,8 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                       <td className="px-3 py-2 text-center font-mono text-slate-400">1</td>
                       <td className="px-3 py-2 font-medium">Electric Actuator-multi turn</td>
                       <td className="px-3 py-2 text-center font-mono font-semibold text-slate-700">AUMA / Rotork</td>
-                      <td className="px-4 py-1.5 text-right font-mono">
-                        <input
-                          type="number"
-                          step="5000"
-                          value={actuatorCost}
-                          onChange={(e) => updateAutomationRate('actuator', e.target.value)}
-                          className="w-28 px-1.5 py-0.5 text-right font-mono text-xs font-bold border border-slate-300 rounded bg-white text-slate-900 focus:ring-1 focus:ring-[#005daa]"
-                        />
+                      <td className="px-4 py-2 text-right font-mono font-semibold text-slate-900 text-primary">
+                        ₹ {formatNumber(actuatorCost, 0)}
                       </td>
                     </tr>
 
@@ -4378,14 +4788,8 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                       <td className="px-3 py-2 text-center font-mono text-slate-400">2</td>
                       <td className="px-3 py-2 font-medium">Gear Box - multi turn</td>
                       <td className="px-3 py-2 text-center font-mono font-semibold text-slate-700">Bevel Gearbox</td>
-                      <td className="px-4 py-1.5 text-right font-mono">
-                        <input
-                          type="number"
-                          step="2000"
-                          value={gearboxCost}
-                          onChange={(e) => updateAutomationRate('gearbox', e.target.value)}
-                          className="w-28 px-1.5 py-0.5 text-right font-mono text-xs font-bold border border-slate-300 rounded bg-white text-slate-900 focus:ring-1 focus:ring-[#005daa]"
-                        />
+                      <td className="px-4 py-2 text-right font-mono font-semibold text-slate-900 text-primary">
+                        ₹ {formatNumber(gearboxCost, 0)}
                       </td>
                     </tr>
 
@@ -4393,14 +4797,8 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
                       <td className="px-3 py-2 text-center font-mono text-slate-400">3</td>
                       <td className="px-3 py-2 font-medium">Miscellaneous & Bracket</td>
                       <td className="px-3 py-2 text-center font-mono text-slate-400">Mounting kit</td>
-                      <td className="px-4 py-1.5 text-right font-mono">
-                        <input
-                          type="number"
-                          step="1000"
-                          value={miscCost}
-                          onChange={(e) => updateAutomationRate('misc', e.target.value)}
-                          className="w-28 px-1.5 py-0.5 text-right font-mono text-xs font-bold border border-slate-300 rounded bg-white text-slate-900 focus:ring-1 focus:ring-[#005daa]"
-                        />
+                      <td className="px-4 py-2 text-right font-mono font-semibold text-slate-900 text-primary">
+                        ₹ {formatNumber(miscCost, 0)}
                       </td>
                     </tr>
 
@@ -4427,23 +4825,23 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
           </div>
 
           {/* Bottom-Line Commercial Summary Card */}
-          <div className="bg-[#FFFDFB] border-2 border-[#E8E3D8] rounded-2xl p-5 shadow-sm space-y-4">
-            <div className="border-b border-[#EAE5DB] pb-2.5 flex items-center justify-between">
-              <span className="font-bold text-sm text-[#242826] uppercase tracking-wide flex items-center gap-2">
+          <div className="bg-[#FFFDFB] border-2 border-subtle rounded-2xl p-5 shadow-sm space-y-4">
+            <div className="border-b border-subtle pb-2.5 flex items-center justify-between">
+              <span className="font-bold text-sm text-primary uppercase tracking-wide flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-[#C46346]"></span>
                 <span>7. Commercial Summary & Quotation</span>
               </span>
-              <span className="text-xs text-[#5C6460] font-mono">
+              <span className="text-xs text-secondary font-mono">
                 Qty: {quantity} {quantity > 1 ? 'Units' : 'Unit'}
               </span>
             </div>
 
             <div className="space-y-2.5 text-xs">
               {/* Fabrication line */}
-              <div className="flex items-center justify-between text-[#242826]">
+              <div className="flex items-center justify-between text-primary">
                 <div className="flex items-center gap-1.5">
                   <span className="font-medium">Fabrication Cost</span>
-                  <span className="text-[11px] text-[#5C6460]">
+                  <span className="text-[11px] text-secondary">
                     ({(Number(totalWeight) || 0).toFixed(1)} kg × ₹{fabRate}/kg)
                   </span>
                 </div>
@@ -4451,19 +4849,19 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
               </div>
 
               {/* Damper Basic Cost */}
-              <div className="flex items-center justify-between text-[#242826]">
+              <div className="flex items-center justify-between text-primary">
                 <span className="font-medium">Damper Basic Cost:</span>
                 <span className="font-mono font-semibold">₹ {formatNumber(damperBasicCost, 0)}</span>
               </div>
 
               {/* Automation Cost */}
-              <div className="flex items-center justify-between text-[#242826]">
+              <div className="flex items-center justify-between text-primary">
                 <span className="font-medium">Automation Cost:</span>
                 <span className="font-mono font-semibold">₹ {formatNumber(damperAutomationCost, 0)}</span>
               </div>
 
               {/* Total Cost */}
-              <div className="pt-2 border-t border-[#EAE5DB] flex items-center justify-between text-[#242826] font-bold text-sm">
+              <div className="pt-2 border-t border-subtle flex items-center justify-between text-primary font-bold text-sm">
                 <span>Total Net Cost:</span>
                 <span className="font-mono text-[#2F4D40]">₹ {formatNumber(totalDamperCost, 0)}</span>
               </div>
@@ -4472,13 +4870,20 @@ export default function NewQuote({ setView, setSelectedQuoteId, user }) {
               <div className="flex items-center justify-between text-[#2F4D40] font-semibold">
                 <div className="flex items-center gap-1.5">
                   <span>Markup Multiplier:</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={markupMultiplier}
-                    onChange={(e) => setMarkupMultiplier(parseFloat(e.target.value) || 1.10)}
-                    className="w-16 px-1.5 py-0.5 text-right font-mono text-xs border border-[#3D6353] rounded bg-[#EEF5F1] text-[#2F4D40] font-bold"
-                  />
+                  {isAdmin ? (
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={markupMultiplier}
+                      onChange={(e) => setMarkupMultiplier(parseFloat(e.target.value) || 1.10)}
+                      className="w-16 px-1.5 py-0.5 text-right font-mono text-xs border border-[#3D6353] rounded bg-[#EEF5F1] text-[#2F4D40] font-bold"
+                    />
+                  ) : (
+                    <span className="font-mono text-xs font-bold text-[#2F4D40] flex items-center gap-1">
+                      <Lock className="w-3 h-3 text-slate-400" />
+                      {markupMultiplier.toFixed(2)} (Admin CPQ Standard)
+                    </span>
+                  )}
                 </div>
                 <span className="font-mono text-[#C46346]">
                   +₹ {formatNumber(unitQuotedPrice - totalDamperCost, 0)}

@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./damper_quote_pro.db"
     
     # CORS
-    ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173"
+    ALLOWED_ORIGINS: str = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173")
     
     # Approval Thresholds (Editable defaults)
     DEFAULT_MIN_APPROVAL_VALUE: float = 1500000.0  # Rs 15 Lakhs

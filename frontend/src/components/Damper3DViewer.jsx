@@ -84,6 +84,8 @@ export default function Damper3DViewer({
   valveTrimMoc = 'CF8M (Cast Stainless Steel SS316)',
   valveSeatMoc = 'PTFE / RTFE',
   valveActuator = 'Electric Quarter-Turn Actuator',
+  selectedPartKey: controlledSelectedPartKey = null,
+  onSelectPart = null,
 }) {
   const containerRef = useRef(null);
   const rendererRef = useRef(null);
@@ -109,7 +111,11 @@ export default function Damper3DViewer({
   const [bladeOnlyMode, setBladeOnlyMode] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
   const [labelFilter, setLabelFilter] = useState('all'); // 'all' | 'modified'
-  const [selectedPartKey, setSelectedPartKey] = useState(null);
+  const [internalSelectedPartKey, setInternalSelectedPartKey] = useState(null);
+  const selectedPartKey = controlledSelectedPartKey !== null && controlledSelectedPartKey !== undefined 
+    ? controlledSelectedPartKey 
+    : internalSelectedPartKey;
+  const setSelectedPartKey = setInternalSelectedPartKey;
   const [highlightedPartKey, setHighlightedPartKey] = useState(null);
   const [modifiedParts, setModifiedParts] = useState({});
   const [lastChangeNotice, setLastChangeNotice] = useState(null);
@@ -376,6 +382,57 @@ export default function Damper3DViewer({
     valveTrimMoc, valveSeatMoc, valveActuator, activePartsList, isValve
   ]);
 
+  // Center / Focus Camera directly onto a selected part
+  const handleFocusPart = (partKey) => {
+    setInternalSelectedPartKey(partKey);
+    const anchorData = anchorsRef.current[partKey];
+    if (anchorData && controlsRef.current && cameraRef.current) {
+      const targetPos = new THREE.Vector3();
+      if (anchorData.obj) {
+        anchorData.obj.getWorldPosition(targetPos);
+      } else if (anchorData.pos) {
+        targetPos.copy(anchorData.pos);
+      }
+      controlsRef.current.target.copy(targetPos);
+      controlsRef.current.update();
+    }
+    const partObj = activePartsList.find((p) => p.key === partKey);
+    if (onSelectPart) {
+      onSelectPart(partKey, partObj);
+    }
+  };
+
+  // Clear part selection and restore clean full assembly view
+  const handleClearSelection = () => {
+    setInternalSelectedPartKey(null);
+    setHighlightedPartKey(null);
+    if (controlsRef.current) {
+      const h = isValve ? ((valveSizeDn || 300) / 1000) * 1.5 : (height || 3000) / 1000;
+      controlsRef.current.target.set(0, h / 2, 0);
+      controlsRef.current.update();
+    }
+    if (onSelectPart) {
+      onSelectPart(null, null);
+    }
+  };
+
+  // Sync external controlled selection
+  useEffect(() => {
+    if (controlledSelectedPartKey) {
+      const anchorData = anchorsRef.current[controlledSelectedPartKey];
+      if (anchorData && controlsRef.current && cameraRef.current) {
+        const targetPos = new THREE.Vector3();
+        if (anchorData.obj) {
+          anchorData.obj.getWorldPosition(targetPos);
+        } else if (anchorData.pos) {
+          targetPos.copy(anchorData.pos);
+        }
+        controlsRef.current.target.copy(targetPos);
+        controlsRef.current.update();
+      }
+    }
+  }, [controlledSelectedPartKey]);
+
   // ═════════════════════════════════════════════════════════════════
   // 3. THREE.JS INITIALIZATION & 60FPS ANCHOR PROJECTION LOOP
   // ═════════════════════════════════════════════════════════════════
@@ -385,7 +442,20 @@ export default function Damper3DViewer({
     const container = containerRef.current;
     const scene = new THREE.Scene();
     sceneRef.current = scene;
-    scene.background = new THREE.Color(0xf1f5f9); // Clean engineering CAD slate-grey
+
+    const isDark = document.documentElement.classList.contains('dark');
+    scene.background = new THREE.Color(isDark ? 0x0f172a : 0xf1f5f9);
+
+    const themeObserver = new MutationObserver(() => {
+      const darkNow = document.documentElement.classList.contains('dark');
+      if (sceneRef.current) {
+        sceneRef.current.background = new THREE.Color(darkNow ? 0x0f172a : 0xf1f5f9);
+      }
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class'],
+    });
 
     const camera = new THREE.PerspectiveCamera(
       45,
@@ -422,11 +492,11 @@ export default function Damper3DViewer({
     dirLight1.shadow.mapSize.height = 2048;
     scene.add(dirLight1);
 
-    const dirLight2 = new THREE.DirectionalLight(0x94a3b8, 0.65);
+    const dirLight2 = new THREE.DirectionalLight(0xb4b0d8, 0.65);
     dirLight2.position.set(-6, -4, -6);
     scene.add(dirLight2);
 
-    const pointLight = new THREE.PointLight(0x005daa, 0.5, 10);
+    const pointLight = new THREE.PointLight(0x7c5cfa, 0.5, 10);
     pointLight.position.set(0, 3, 3);
     scene.add(pointLight);
 
@@ -443,55 +513,78 @@ export default function Damper3DViewer({
       animationId = requestAnimationFrame(animate);
       controls.update();
 
-      // Project 3D Component Anchors to 2D HTML Callout Badges
+      // Project 3D Component Anchor to 2D HTML Callout Badge (ONLY for active selected part)
       if (container && cameraRef.current) {
         const w = container.clientWidth;
         const h = container.clientHeight;
         const cam = cameraRef.current;
+        const activeHighlightKey = selectedPartKey || highlightedPartKey;
 
-        Object.keys(anchorsRef.current).forEach((key) => {
-          const anchorData = anchorsRef.current[key];
-          const badgeEl = badgeRefs.current[key];
-          if (!badgeEl || !anchorData) return;
-
-          // Determine current world 3D position (supports moving parts)
-          if (anchorData.obj) {
-            anchorData.obj.getWorldPosition(tempVec);
-            if (anchorData.offset) tempVec.add(anchorData.offset);
-          } else if (anchorData.pos) {
-            tempVec.copy(anchorData.pos);
-          }
-
-          tempVec.project(cam);
-
-          const isFront = tempVec.z < 1.0;
-          const screenX = (tempVec.x * 0.5 + 0.5) * w;
-          const screenY = -(tempVec.y * 0.5 - 0.5) * h;
-
-          // Keep in visible viewport bounds
-          if (isFront && screenX >= 10 && screenX <= w - 10 && screenY >= 10 && screenY <= h - 10) {
-            badgeEl.style.transform = `translate3d(${screenX}px, ${screenY}px, 0)`;
-            badgeEl.style.opacity = '1';
-            badgeEl.style.visibility = 'visible';
-          } else {
-            badgeEl.style.opacity = '0';
-            badgeEl.style.visibility = 'hidden';
+        // Hide any non-active callout badges so they don't clutter the 3D space
+        Object.keys(badgeRefs.current).forEach((k) => {
+          if (badgeRefs.current[k] && k !== activeHighlightKey) {
+            badgeRefs.current[k].style.opacity = '0';
+            badgeRefs.current[k].style.visibility = 'hidden';
           }
         });
 
-        // Pulsing Emissive Glow on Active / Modified 3D Meshes
-        const activeHighlightKey = selectedPartKey || highlightedPartKey;
+        // Project single callout badge for the selected part ONLY
+        if (activeHighlightKey && anchorsRef.current[activeHighlightKey]) {
+          const anchorData = anchorsRef.current[activeHighlightKey];
+          const badgeEl = badgeRefs.current[activeHighlightKey];
+          if (badgeEl) {
+            if (anchorData.obj) {
+              anchorData.obj.getWorldPosition(tempVec);
+              if (anchorData.offset) tempVec.add(anchorData.offset);
+            } else if (anchorData.pos) {
+              tempVec.copy(anchorData.pos);
+            }
+
+            tempVec.project(cam);
+
+            const isFront = tempVec.z < 1.0;
+            const screenX = (tempVec.x * 0.5 + 0.5) * w;
+            const screenY = -(tempVec.y * 0.5 - 0.5) * h;
+
+            if (isFront && screenX >= 10 && screenX <= w - 10 && screenY >= 10 && screenY <= h - 10) {
+              badgeEl.style.transform = `translate3d(${screenX}px, ${screenY}px, 0)`;
+              badgeEl.style.opacity = '1';
+              badgeEl.style.visibility = 'visible';
+            } else {
+              badgeEl.style.opacity = '0';
+              badgeEl.style.visibility = 'hidden';
+            }
+          }
+        }
+
+        // Luminous Glow on Selected Part + Subdued Ghost Dimming on Unselected Parts
         const now = Date.now();
-        const pulse = 0.35 + 0.35 * Math.sin(now * 0.007);
+        const pulse = 0.7 + 0.3 * Math.sin(now * 0.007);
 
         materialsMapRef.current.forEach((mat, key) => {
-          if (key === activeHighlightKey) {
-            const isMod = modifiedPartsRef.current && modifiedPartsRef.current[key];
-            mat.emissive.setHex(isMod ? 0xf89030 : 0x005daa); // Orange for modified, Blue for selected
-            mat.emissiveIntensity = pulse;
+          if (activeHighlightKey) {
+            if (key === activeHighlightKey) {
+              const isMod = modifiedPartsRef.current && modifiedPartsRef.current[key];
+              mat.emissive.setHex(isMod ? 0xf89030 : 0x00f0ff); // Radiant electric cyan
+              mat.emissiveIntensity = pulse;
+              mat.transparent = false;
+              mat.opacity = 1.0;
+              mat.depthWrite = true;
+            } else {
+              // Dim & ghost unselected components so the selected part stands out with complete clarity
+              mat.emissive.setHex(0x000000);
+              mat.emissiveIntensity = 0;
+              mat.transparent = true;
+              mat.opacity = 0.28;
+              mat.depthWrite = false;
+            }
           } else {
+            // Pristine solid engineering materials when no part is selected
             mat.emissive.setHex(0x000000);
             mat.emissiveIntensity = 0;
+            mat.transparent = false;
+            mat.opacity = 1.0;
+            mat.depthWrite = true;
           }
         });
       }
@@ -500,7 +593,7 @@ export default function Damper3DViewer({
     };
     animate();
 
-    // 3D Canvas Click Handler via Raycaster
+    // 3D Canvas Click Handler via Raycaster (Select part on click, deselect on empty background)
     const handleCanvasClick = (e) => {
       if (!container || !cameraRef.current || !damperGroupRef.current) return;
       const rect = container.getBoundingClientRect();
@@ -517,12 +610,15 @@ export default function Damper3DViewer({
           let cur = hit.object;
           while (cur && cur !== damperGroupRef.current) {
             if (cur.userData && cur.userData.partKey) {
-              setSelectedPartKey(cur.userData.partKey);
+              handleFocusPart(cur.userData.partKey);
               return;
             }
             cur = cur.parent;
           }
         }
+      } else {
+        // Clicked outside on empty canvas -> clear selection and restore full clean model
+        handleClearSelection();
       }
     };
     const domEl = renderer.domElement;
@@ -539,6 +635,9 @@ export default function Damper3DViewer({
     return () => {
       domEl.removeEventListener('click', handleCanvasClick);
       window.removeEventListener('resize', handleResize);
+      if (themeObserver) {
+        themeObserver.disconnect();
+      }
       cancelAnimationFrame(animationId);
       renderer.dispose();
       controls.dispose();
@@ -1557,27 +1656,11 @@ export default function Damper3DViewer({
     controlsRef.current.update();
   };
 
-  // Center / Focus Camera directly onto a selected part
-  const handleFocusPart = (partKey) => {
-    setSelectedPartKey(partKey);
-    const anchorData = anchorsRef.current[partKey];
-    if (anchorData && controlsRef.current && cameraRef.current) {
-      const targetPos = new THREE.Vector3();
-      if (anchorData.obj) {
-        anchorData.obj.getWorldPosition(targetPos);
-      } else if (anchorData.pos) {
-        targetPos.copy(anchorData.pos);
-      }
-      controlsRef.current.target.copy(targetPos);
-      controlsRef.current.update();
-    }
-  };
-
   const selectedPart = activePartsList.find(p => p.key === selectedPartKey);
   const selectedMod = selectedPartKey ? modifiedParts[selectedPartKey] : null;
 
   return (
-    <div className="relative w-full h-[540px] sm:h-[590px] bg-slate-900/5 rounded-2xl overflow-hidden border border-slate-300 shadow-lg flex flex-col font-sans select-none">
+    <div className="relative w-full h-[540px] sm:h-[590px] image-stage rounded-2xl overflow-hidden border border-border-subtle shadow-lg flex flex-col font-sans select-none">
       
       {/* 3D WebGL Canvas Viewport */}
       <div 
@@ -1586,275 +1669,108 @@ export default function Damper3DViewer({
       />
 
       {/* ═════════════════════════════════════════════════════════════ */}
-      {/* 5. INTERACTIVE 3D COMPONENT CALLOUT OVERLAY BADGES            */}
-      {/* ═════════════════════════════════════════════════════════════ */}
-      {showLabels && (
-        <div className="absolute inset-0 pointer-events-none overflow-hidden z-10">
-          {activePartsList.map((part) => {
-            const isSelected = selectedPartKey === part.key;
-            const isHighlighted = highlightedPartKey === part.key;
-            const mod = modifiedParts[part.key];
-            const isModified = Boolean(mod && (Date.now() - mod.timestamp < 35000));
-
-            // Filter mode support
-            if (labelFilter === 'modified' && !isModified && !isSelected) return null;
-
-            return (
-              <div
-                key={part.key}
-                ref={(el) => (badgeRefs.current[part.key] = el)}
-                className="absolute top-0 left-0 -translate-x-1/2 -translate-y-1/2 pointer-events-auto transition-opacity duration-150 will-change-transform flex items-center group cursor-pointer"
-                style={{ opacity: 0 }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleFocusPart(part.key);
-                }}
-              >
-                {/* 3D Pin Target Point */}
-                <div className="relative flex items-center justify-center">
-                  <div className={`w-3.5 h-3.5 rounded-full border-2 border-white shadow-md flex items-center justify-center transition-all ${
-                    isModified 
-                      ? 'bg-[#f89030] scale-125 ring-4 ring-[#f89030]/40 animate-pulse' 
-                      : isSelected 
-                      ? 'bg-[#005daa] scale-125 ring-4 ring-[#005daa]/40' 
-                      : 'bg-slate-700 hover:bg-[#005daa] hover:scale-110'
-                  }`}>
-                    <div className="w-1.5 h-1.5 rounded-full bg-white" />
-                  </div>
-                  {isModified && (
-                    <div className="absolute w-6 h-6 rounded-full bg-[#f89030] opacity-40 animate-ping pointer-events-none" />
-                  )}
-                </div>
-
-                {/* Annotation Card */}
-                <div 
-                  className={`ml-1.5 px-2.5 py-1.5 rounded-xl shadow-lg border backdrop-blur-md transition-all duration-200 select-none max-w-[210px] sm:max-w-[240px] text-left ${
-                    isSelected 
-                      ? 'bg-[#005daa] text-white border-blue-400 ring-2 ring-blue-300 scale-105 z-30' 
-                      : isModified
-                      ? 'bg-gradient-to-r from-amber-600 to-amber-500 text-white border-amber-300 ring-2 ring-amber-300/60 shadow-amber-500/30 scale-105 z-30'
-                      : 'bg-white/95 text-slate-800 border-slate-200/95 hover:bg-white hover:border-slate-300 hover:shadow-xl'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-black uppercase tracking-wider font-mono">
-                      {part.name}
-                    </span>
-                    {isModified && (
-                      <span className="text-[8px] font-extrabold px-1.5 py-0.2 rounded-full bg-white text-amber-800 animate-pulse uppercase tracking-tight">
-                        ✨ UPDATED
-                      </span>
-                    )}
-                  </div>
-                  
-                  <div className={`text-[10px] font-medium leading-tight truncate mt-0.5 ${isSelected || isModified ? 'text-white/95' : 'text-slate-600'}`}>
-                    {part.spec}
-                  </div>
-
-                  {isModified && mod && (
-                    <div className="text-[9px] font-mono font-bold text-amber-100 mt-1 bg-black/25 rounded px-1.5 py-0.5 truncate flex items-center gap-1">
-                      <span>✦ {mod.label}:</span>
-                      <span className="text-white underline">{mod.to}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* ═════════════════════════════════════════════════════════════ */}
-      {/* 6. REAL-TIME CHANGE HUD TOAST BANNER (TOP-CENTER)            */}
-      {/* ═════════════════════════════════════════════════════════════ */}
-      {lastChangeNotice && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 text-white px-4 py-2 rounded-2xl shadow-xl border border-amber-300/40 flex items-center gap-3 animate-in fade-in slide-in-from-top duration-300 max-w-[92%] sm:max-w-md">
-          <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center shrink-0">
-            <Sparkles className="w-3.5 h-3.5 text-amber-100 animate-pulse" />
-          </div>
-          <div className="text-xs flex-1 truncate">
-            <div className="font-extrabold tracking-tight flex items-center gap-1">
-              <span>Change Applied in 3D:</span>
-              <span className="underline decoration-amber-200">{lastChangeNotice.partName}</span>
-            </div>
-            <div className="font-mono text-[11px] text-amber-100 truncate mt-0.5">
-              {lastChangeNotice.label}: <span className="line-through opacity-70">{lastChangeNotice.from}</span> → <span className="font-bold text-white bg-white/20 px-1 rounded">{lastChangeNotice.to}</span>
-            </div>
-          </div>
-          <button
-            onClick={() => handleFocusPart(lastChangeNotice.partKey)}
-            className="px-2.5 py-1 rounded-lg bg-white text-amber-800 text-[11px] font-bold hover:bg-amber-50 transition-colors shadow-sm shrink-0"
-          >
-            Locate
-          </button>
-          <button
-            onClick={() => setLastChangeNotice(null)}
-            className="text-white/80 hover:text-white p-1 rounded hover:bg-white/10"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-
-      {/* ═════════════════════════════════════════════════════════════ */}
-      {/* 7. CAD SPECIFICATION BADGE (TOP-LEFT)                         */}
-      {/* ═════════════════════════════════════════════════════════════ */}
-      <div className="absolute top-3 left-3 bg-white/95 backdrop-blur border border-slate-200/90 rounded-xl px-3.5 py-2.5 shadow-sm pointer-events-none flex flex-col gap-1 max-w-xs sm:max-w-sm z-10">
-        <div className="flex items-center gap-2">
-          <span className={`w-2.5 h-2.5 rounded-full ${isValve ? 'bg-[#f89030]' : 'bg-[#005daa]'} animate-pulse`} />
-          <span className={`font-extrabold text-xs ${isValve ? 'text-[#f89030]' : 'text-[#005daa]'} font-mono tracking-tight uppercase truncate`}>
-            {isValve ? (valveTypeName || 'Industrial Valve') : damperTypeName}
-          </span>
-          {isEstimatedProfile && !isValve && (
-            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300">
-              CAD Approx
-            </span>
-          )}
-        </div>
-
-        {isValve ? (
-          <div className="space-y-0.5">
-            <div className="text-[13px] font-bold text-slate-900 font-mono">
-              DN{valveSizeDn || 300} ({valveSizeInch || '12"'}) • {valvePressureRating}
-            </div>
-            <div className="text-[10px] text-slate-600 flex flex-wrap gap-1 font-medium">
-              <span>{valveEndConnection}</span> • 
-              <span>Body: {valveBodyMoc.split(' ')[0]}</span> • 
-              <span>Trim: {valveTrimMoc.split(' ')[0]}</span>
-            </div>
-            <div className="text-[10px] text-slate-500 font-mono">
-              Drive: <span className="font-semibold text-slate-800">{valveActuator.split(' ')[0]}</span>
-            </div>
-          </div>
-        ) : (
-          <div>
-            <div className="text-[12px] font-bold text-slate-800 font-mono">
-              {width} × {height} × {depth} <span className="text-[10px] text-slate-500 font-normal">mm duct</span>
-            </div>
-            {isMultiBlade ? (
-              <div className="text-[10px] text-slate-600 flex flex-col gap-0.5 mt-0.5 font-medium">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[#f89030] font-bold">{bladeType}</span>
-                  <span>•</span>
-                  <span>{bladeOrientation}</span>
-                  <span>•</span>
-                  <span>{opposedBlades ? 'Opposed' : 'Parallel'}</span>
-                </div>
-                <div className="text-slate-500 font-mono">
-                  Chord: <span className="text-slate-800 font-bold">{bladeChord}</span> mm • 
-                  Thk: <span className="text-slate-800 font-bold">{bladeThick}</span> mm • 
-                  Count: <span className="text-slate-800 font-bold">{numberOfBlades}</span>
-                </div>
-              </div>
-            ) : (
-              <div className="text-[10px] text-slate-600 flex flex-col gap-0.5 mt-0.5 font-medium">
-                <div>Gate: <span className="font-bold text-slate-800">{gateThickness}mm Plate</span> with {gateRackCount} Racks</div>
-                <div>Drive: <span className="font-bold text-[#005daa]">{actuatorType}</span></div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* ═════════════════════════════════════════════════════════════ */}
-      {/* 8. MODEL PARTS & COMPONENT SELECTOR BAR (TOP-RIGHT)          */}
-      {/* ═════════════════════════════════════════════════════════════ */}
-      <div className="absolute top-3 right-3 z-10 flex flex-wrap items-center gap-1.5 max-w-[50%] justify-end">
-        {activePartsList.map((part) => {
-          const isSelected = selectedPartKey === part.key;
-          const isMod = modifiedParts[part.key] && (Date.now() - modifiedParts[part.key].timestamp < 35000);
-
-          return (
-            <button
-              key={part.key}
-              type="button"
-              onClick={() => handleFocusPart(part.key)}
-              className={`px-2 py-1 text-[10px] font-bold rounded-lg border transition-all flex items-center gap-1 shadow-sm ${
-                isSelected
-                  ? 'bg-[#005daa] text-white border-[#005daa] ring-2 ring-blue-300'
-                  : isMod
-                  ? 'bg-amber-500 text-white border-amber-400 animate-pulse'
-                  : 'bg-white/90 text-slate-700 border-slate-200 hover:bg-white hover:border-slate-300'
-              }`}
-            >
-              {isMod ? (
-                <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
-              ) : (
-                <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-              )}
-              <span className="truncate max-w-[70px] sm:max-w-[90px]">{part.name.split(' ')[0]}</span>
-              {isMod && <span className="text-[8px] bg-black/20 rounded px-1">Mod</span>}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* ═════════════════════════════════════════════════════════════ */}
-      {/* 9. SELECTED COMPONENT INSPECTION CARD (SLIDE-IN MODAL)        */}
+      {/* 5. MINIMALIST 3D CALLOUT (ONLY for the actively selected part) */}
       {/* ═════════════════════════════════════════════════════════════ */}
       {selectedPart && (
-        <div className="absolute bottom-16 right-3 z-20 bg-white/95 backdrop-blur-md border border-slate-300 rounded-2xl p-3.5 shadow-xl max-w-sm animate-in fade-in slide-in-from-bottom-2 duration-200">
-          <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-2">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#005daa]" />
+        <div className="absolute inset-0 pointer-events-none overflow-hidden z-10">
+          <div
+            ref={(el) => (badgeRefs.current[selectedPart.key] = el)}
+            className="absolute top-0 left-0 -translate-x-1/2 -translate-y-1/2 pointer-events-auto transition-all duration-150 will-change-transform flex items-center group cursor-pointer"
+            style={{ opacity: 0 }}
+          >
+            {/* 3D Pin Target */}
+            <div className="relative flex items-center justify-center">
+              <div className="w-3.5 h-3.5 rounded-full border-2 border-white shadow-lg bg-accent ring-4 ring-accent-text/40 flex items-center justify-center animate-pulse">
+                <div className="w-1.5 h-1.5 rounded-full bg-white" />
+              </div>
+              <div className="absolute w-7 h-7 rounded-full bg-accent-text opacity-40 animate-ping pointer-events-none" />
+            </div>
+
+            {/* Clean Floating Tag */}
+            <div className="ml-2 px-3 py-1.5 rounded-xl shadow-xl border backdrop-blur-md bg-elevated/95 text-text-primary border-border-strong ring-2 ring-focus-ring/20 text-left select-none flex items-center gap-2">
               <div>
-                <h4 className="text-xs font-black text-slate-900 uppercase font-mono tracking-wide">
+                <div className="text-[11px] font-black uppercase tracking-wider font-mono text-accent-text">
                   {selectedPart.name}
-                </h4>
-                <span className="text-[10px] font-semibold text-[#005daa] uppercase tracking-wider">
-                  {selectedPart.category}
-                </span>
+                </div>
+                <div className="text-[10px] text-text-secondary font-medium leading-tight truncate max-w-[200px]">
+                  {selectedPart.spec}
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleClearSelection();
+                }}
+                className="text-text-muted hover:text-text-primary p-0.5 rounded-md hover:bg-surface"
+                title="Deselect"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
-            <button
-              onClick={() => setSelectedPartKey(null)}
-              className="text-slate-400 hover:text-slate-700 p-0.5 rounded-md hover:bg-slate-100"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          <p className="text-[11px] text-slate-600 mt-2 leading-relaxed">
-            {selectedPart.desc}
-          </p>
-
-          <div className="mt-2.5 p-2 bg-slate-50 border border-slate-200/80 rounded-xl space-y-1">
-            <div className="text-[10px] font-bold text-slate-700 uppercase tracking-wide">
-              Current Specifications Applied:
-            </div>
-            <div className="text-[11px] font-mono font-bold text-slate-900">
-              {selectedPart.spec}
-            </div>
-            {selectedMod && (
-              <div className="text-[10px] font-mono text-amber-700 font-bold bg-amber-100 border border-amber-200 rounded px-1.5 py-0.5 mt-1 flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-amber-600" />
-                <span>Recently Modified: {selectedMod.label} → {selectedMod.to}</span>
-              </div>
-            )}
-          </div>
-
-          <div className="mt-2.5 flex items-center justify-between text-[10px] text-slate-500 font-mono">
-            <span>Click part or pin to inspect</span>
-            <button
-              onClick={() => handleFocusPart(selectedPart.key)}
-              className="text-[#005daa] font-bold hover:underline flex items-center gap-0.5"
-            >
-              <Crosshair className="w-3 h-3" /> Focus in 3D
-            </button>
           </div>
         </div>
       )}
 
       {/* ═════════════════════════════════════════════════════════════ */}
-      {/* 10. FLOATING BOTTOM TOOLBAR (CONTROLS & PRESETS)              */}
+      {/* 6. MINIMALIST CAD MODEL BADGE (TOP-LEFT)                      */}
       {/* ═════════════════════════════════════════════════════════════ */}
-      <div className="absolute bottom-3 left-3 right-3 bg-white/95 backdrop-blur border border-slate-200/90 rounded-xl px-4 py-2.5 shadow-sm flex flex-wrap items-center justify-between gap-3 z-10">
+      <div className="absolute top-3 left-3 bg-surface/90 backdrop-blur-md border border-border-subtle rounded-xl px-3 py-1.5 shadow-sm flex items-center gap-2 z-10 pointer-events-none">
+        <span className={`w-2 h-2 rounded-full ${isValve ? 'bg-warning' : 'bg-accent-text'} animate-pulse`} />
+        <span className="font-extrabold text-xs text-text-primary font-mono uppercase tracking-tight">
+          {isValve ? (valveTypeName || 'Industrial Valve') : damperTypeName}
+        </span>
+        <span className="text-[10px] text-text-muted font-mono">
+          • {isValve ? `DN${valveSizeDn} (${valveSizeInch})` : `${width}×${height}×${depth}mm`}
+        </span>
+      </div>
+
+      {/* ═════════════════════════════════════════════════════════════ */}
+      {/* 7. COMPACT PART SELECTOR (TOP-RIGHT)                          */}
+      {/* ═════════════════════════════════════════════════════════════ */}
+      <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+        {selectedPart && (
+          <div className="flex items-center gap-1.5 bg-accent text-accent-contrast px-2.5 py-1 rounded-lg text-xs font-semibold shadow-sm">
+            <span className="w-1.5 h-1.5 rounded-full bg-accent-contrast animate-ping" />
+            <span className="truncate max-w-[130px]">{selectedPart.name}</span>
+            <button
+              type="button"
+              onClick={handleClearSelection}
+              className="text-accent-contrast/80 hover:text-accent-contrast p-0.5 rounded hover:bg-surface/20 ml-0.5"
+              title="Clear Selection"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        <select
+          value={selectedPartKey || ''}
+          onChange={(e) => {
+            if (e.target.value) handleFocusPart(e.target.value);
+            else handleClearSelection();
+          }}
+          className="bg-surface/90 backdrop-blur-md text-text-primary border border-border-subtle text-xs font-semibold px-2.5 py-1.5 rounded-lg shadow-sm cursor-pointer hover:bg-elevated focus:outline-none focus:ring-2 focus:ring-focus-ring"
+        >
+          <option value="">Inspect Part...</option>
+          {activePartsList.map((part) => (
+            <option key={part.key} value={part.key}>
+              {part.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* ═════════════════════════════════════════════════════════════ */}
+      {/* 8. SLEEK MINIMALIST BOTTOM TOOLBAR                            */}
+      {/* ═════════════════════════════════════════════════════════════ */}
+      <div className="absolute bottom-3 left-3 right-3 bg-surface/90 backdrop-blur-md border border-border-subtle rounded-xl px-4 py-2 shadow-sm flex flex-wrap items-center justify-between gap-3 z-10">
         
-        {/* Flap Opening Slider */}
-        <div className="flex items-center gap-3 min-w-[200px]">
-          <span className="text-xs font-bold text-slate-700 font-mono flex items-center gap-1">
-            <Sliders className="w-3.5 h-3.5 text-[#005daa]" />
-            <span>{isValve ? 'Valve Opening:' : 'Opening:'}</span>
+        {/* Travel / Opening Slider */}
+        <div className="flex items-center gap-2.5 min-w-[180px]">
+          <span className="text-xs font-bold text-text-primary font-mono flex items-center gap-1">
+            <Sliders className="w-3.5 h-3.5 text-accent-text" />
+            <span>{isValve ? 'Travel:' : 'Flap:'}</span>
           </span>
           <input
             type="range"
@@ -1862,84 +1778,47 @@ export default function Damper3DViewer({
             max="100"
             value={flapOpen}
             onChange={(e) => setFlapOpen(Number(e.target.value))}
-            className="w-24 sm:w-32 accent-[#f89030] cursor-pointer"
+            className="w-24 sm:w-28 accent-accent cursor-pointer"
           />
-          <span className="text-xs font-mono font-bold text-[#005daa] min-w-[34px]">
+          <span className="text-xs font-mono font-bold text-accent-text min-w-[32px]">
             {flapOpen}%
           </span>
         </div>
 
-        {/* Camera Views, Labels Toggle & Wireframe */}
+        {/* Camera Views & Wireframe */}
         <div className="flex items-center gap-1.5 flex-wrap">
-          {/* Labels Toggle */}
-          <button
-            type="button"
-            onClick={() => setShowLabels(!showLabels)}
-            className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center gap-1 ${
-              showLabels
-                ? 'bg-[#005daa] text-white border-[#005daa] shadow-sm'
-                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-            }`}
-            title="Toggle 3D Part Callout Labels"
-          >
-            <Tag className="w-3 h-3" />
-            <span>{showLabels ? 'Labels: ON' : 'Labels: OFF'}</span>
-          </button>
-
-          {showLabels && (
+          {selectedPartKey && (
             <button
               type="button"
-              onClick={() => setLabelFilter(labelFilter === 'all' ? 'modified' : 'all')}
-              className={`px-2 py-1 text-[10px] font-bold rounded-lg border transition-all ${
-                labelFilter === 'modified'
-                  ? 'bg-amber-500 text-white border-amber-500'
-                  : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
-              }`}
-              title="Show only modified parts or all parts"
+              onClick={handleClearSelection}
+              className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-accent hover:bg-accent-hover text-accent-contrast transition-colors cursor-pointer shadow-xs"
             >
-              {labelFilter === 'modified' ? 'Modified Only' : 'Show All'}
+              Show Full Assembly
             </button>
           )}
 
-          {/* Camera Views */}
           {['iso', 'front', 'side', 'top'].map((v) => (
             <button
               key={v}
               type="button"
               onClick={() => setCameraView(v)}
-              className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors uppercase"
+              className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-elevated hover:bg-surface text-text-primary transition-colors uppercase cursor-pointer border border-border-subtle"
             >
               {v}
             </button>
           ))}
 
-          {/* Wireframe Mode */}
           <button
             type="button"
             onClick={() => setWireframe(!wireframe)}
-            className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg border transition-all ${
+            className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg border transition-all cursor-pointer ${
               wireframe 
-                ? 'bg-[#005daa] text-white border-[#005daa]' 
-                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                ? 'bg-accent text-accent-contrast border-accent' 
+                : 'bg-elevated text-text-primary border-border-subtle hover:bg-surface'
             }`}
           >
             Wireframe
           </button>
-
-          {/* Blade Only Mode for Multi-Blade Damper */}
-          {!isValve && isMultiBlade && (
-            <button
-              type="button"
-              onClick={() => setBladeOnlyMode(!bladeOnlyMode)}
-              className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all ${
-                bladeOnlyMode
-                  ? 'bg-[#f89030] text-white border-[#f89030] shadow-sm'
-                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-              }`}
-            >
-              {bladeOnlyMode ? 'Show Damper' : 'Blade Only'}
-            </button>
-          )}
         </div>
       </div>
     </div>

@@ -49,6 +49,7 @@ def generate_quote_excel(quote_data: Dict[str, Any]) -> bytes:
     is_mb_verified = bool(rates_used.get("multi_blade_rates", {}).get("is_verified", False))
     has_mb_placeholder = (d_type == "multi_blade" and not is_mb_verified)
 
+    is_admin = bool(quote_data.get("is_admin", True))
     cur_row = 3
     if has_mb_placeholder:
         ws.merge_cells(f"A{cur_row}:P{cur_row}")
@@ -76,17 +77,31 @@ def generate_quote_excel(quote_data: Dict[str, Any]) -> bytes:
 
     # Table headers, dynamically starting after top notices
     header_row = cur_row + 1
-    headers_r4 = [
-        (f"A{header_row}", "Sr.No"), (f"B{header_row}", "Part Name"), (f"C{header_row}", "SHEET SIZE / DIM"), (f"D{header_row}", ""), (f"E{header_row}", ""),
-        (f"F{header_row}", "Qty"), (f"G{header_row}", "Total Weight"), (f"H{header_row}", "MOC"), (f"I{header_row}", "Rate"), (f"J{header_row}", "RM Cost"),
-        (f"K{header_row}", "MFG. COST"), (f"L{header_row}", ""), (f"M{header_row}", ""), (f"N{header_row}", ""), (f"O{header_row}", ""), (f"P{header_row}", "")
-    ]
     subheader_row = header_row + 1
-    headers_r5 = [
-        (f"A{subheader_row}", ""), (f"B{subheader_row}", ""), (f"C{subheader_row}", "L / DIA"), (f"D{subheader_row}", "W / LENG"), (f"E{subheader_row}", "T (mm)"),
-        (f"F{subheader_row}", ""), (f"G{subheader_row}", "(kg)"), (f"H{subheader_row}", ""), (f"I{subheader_row}", "Rs/kg"), (f"J{subheader_row}", "(Rs)"),
-        (f"K{subheader_row}", "LC RATE"), (f"L{subheader_row}", "LC"), (f"M{subheader_row}", "Rolling"), (f"N{subheader_row}", "RC"), (f"O{subheader_row}", "MC"), (f"P{subheader_row}", "TOTAL MC")
-    ]
+    if is_admin:
+        headers_r4 = [
+            (f"A{header_row}", "Sr.No"), (f"B{header_row}", "Part Name"), (f"C{header_row}", "SHEET SIZE / DIM"), (f"D{header_row}", ""), (f"E{header_row}", ""),
+            (f"F{header_row}", "Qty"), (f"G{header_row}", "Total Weight"), (f"H{header_row}", "MOC"), (f"I{header_row}", "Rate"), (f"J{header_row}", "RM Cost"),
+            (f"K{header_row}", "MFG. COST"), (f"L{header_row}", ""), (f"M{header_row}", ""), (f"N{header_row}", ""), (f"O{header_row}", ""), (f"P{header_row}", "")
+        ]
+        headers_r5 = [
+            (f"A{subheader_row}", ""), (f"B{subheader_row}", ""), (f"C{subheader_row}", "L / DIA"), (f"D{subheader_row}", "W / LENG"), (f"E{subheader_row}", "T (mm)"),
+            (f"F{subheader_row}", ""), (f"G{subheader_row}", "(kg)"), (f"H{subheader_row}", ""), (f"I{subheader_row}", "Rs/kg"), (f"J{subheader_row}", "(Rs)"),
+            (f"K{subheader_row}", "LC RATE"), (f"L{subheader_row}", "LC"), (f"M{subheader_row}", "Rolling"), (f"N{subheader_row}", "RC"), (f"O{subheader_row}", "MC"), (f"P{subheader_row}", "TOTAL MC")
+        ]
+        num_cols = 16
+    else:
+        # For non-admin members: Engineering schedule only (No part prices in parts sheet, prices in cost column only)
+        headers_r4 = [
+            (f"A{header_row}", "Sr.No"), (f"B{header_row}", "Part Name (45 BOM Schedule)"), (f"C{header_row}", "SHEET SIZE / DIM"), (f"D{header_row}", ""), (f"E{header_row}", ""),
+            (f"F{header_row}", "Qty"), (f"G{header_row}", "Total Weight"), (f"H{header_row}", "MOC")
+        ]
+        headers_r5 = [
+            (f"A{subheader_row}", ""), (f"B{subheader_row}", ""), (f"C{subheader_row}", "L / DIA"), (f"D{subheader_row}", "W / LENG"), (f"E{subheader_row}", "T (mm)"),
+            (f"F{subheader_row}", ""), (f"G{subheader_row}", "(kg)"), (f"H{subheader_row}", "")
+        ]
+        num_cols = 8
+
     for cell, text in headers_r4:
         ws[cell] = text
     for cell, text in headers_r5:
@@ -94,9 +109,11 @@ def generate_quote_excel(quote_data: Dict[str, Any]) -> bytes:
 
     # Merge header cells
     ws.merge_cells(start_row=header_row, start_column=3, end_row=header_row, end_column=5)
-    ws.merge_cells(start_row=header_row, start_column=11, end_row=header_row, end_column=16)
+    if is_admin:
+        ws.merge_cells(start_row=header_row, start_column=11, end_row=header_row, end_column=16)
+
     for r in [header_row, subheader_row]:
-        for c in range(1, 17):
+        for c in range(1, num_cols + 1):
             cell = ws.cell(row=r, column=c)
             cell.font = font_header
             cell.fill = fill_header
@@ -112,7 +129,7 @@ def generate_quote_excel(quote_data: Dict[str, Any]) -> bytes:
         ws.cell(row=r, column=1, value=line.get("sr_no", i+1)).alignment = Alignment(horizontal="center")
         part_name = line.get("part_name", "")
         if line.get("is_manually_edited"):
-            part_name = f"{part_name} [MANUALLY EDITED]"
+            part_name = f"{part_name} [PROPORTIONAL / EDITED]"
             if line.get("edit_note"):
                 part_name = f"{part_name} - {line['edit_note']}"
         ws.cell(row=r, column=2, value=part_name).alignment = Alignment(horizontal="left")
@@ -132,28 +149,30 @@ def generate_quote_excel(quote_data: Dict[str, Any]) -> bytes:
             ws.cell(row=r, column=7, value=f"=(C{r}*D{r}*E{r}*0.00000785)*F{r}")
             
         ws.cell(row=r, column=8, value=line.get("moc", "IS 2062")).alignment = Alignment(horizontal="center")
-        ws.cell(row=r, column=9, value=float(line.get("material_rate", 72))).alignment = Alignment(horizontal="right")
-        
-        # LIVE FORMULA FOR RM COST (Column J)
-        ws.cell(row=r, column=10, value=f"=G{r}*I{r}")
-        
-        # LC Rate in K
-        ws.cell(row=r, column=11, value=float(line.get("plate_labour_rate", 10))).alignment = Alignment(horizontal="right")
-        
-        # LIVE FORMULA FOR LC (Column L)
-        if is_round:
-            ws.cell(row=r, column=12, value=0)
-        else:
-            ws.cell(row=r, column=12, value=f"=(C{r}+D{r})*2*E{r}*K{r}/1000")
+
+        if is_admin:
+            ws.cell(row=r, column=9, value=float(line.get("material_rate", 72))).alignment = Alignment(horizontal="right")
             
-        ws.cell(row=r, column=13, value=0) # Rolling rate
-        ws.cell(row=r, column=14, value=float(line.get("rolling_cost", 0)))
-        ws.cell(row=r, column=15, value=float(line.get("per_piece_machining", 0)))
+            # LIVE FORMULA FOR RM COST (Column J)
+            ws.cell(row=r, column=10, value=f"=G{r}*I{r}")
+            
+            # LC Rate in K
+            ws.cell(row=r, column=11, value=float(line.get("plate_labour_rate", 10))).alignment = Alignment(horizontal="right")
+            
+            # LIVE FORMULA FOR LC (Column L)
+            if is_round:
+                ws.cell(row=r, column=12, value=0)
+            else:
+                ws.cell(row=r, column=12, value=f"=(C{r}+D{r})*2*E{r}*K{r}/1000")
+                
+            ws.cell(row=r, column=13, value=0) # Rolling rate
+            ws.cell(row=r, column=14, value=float(line.get("rolling_cost", 0)))
+            ws.cell(row=r, column=15, value=float(line.get("per_piece_machining", 0)))
+            
+            # LIVE FORMULA FOR TOTAL MC (Column P)
+            ws.cell(row=r, column=16, value=f"=(L{r}+N{r}+O{r})*F{r}")
         
-        # LIVE FORMULA FOR TOTAL MC (Column P)
-        ws.cell(row=r, column=16, value=f"=(L{r}+N{r}+O{r})*F{r}")
-        
-        for c in range(1, 17):
+        for c in range(1, num_cols + 1):
             ws.cell(row=r, column=c).font = font_regular
             ws.cell(row=r, column=c).border = thin_border
             if line.get("is_manually_edited"):
@@ -164,48 +183,61 @@ def generate_quote_excel(quote_data: Dict[str, Any]) -> bytes:
     end_parts_row = start_row + len(lines) - 1
     subtotal_row = end_parts_row + 1
 
-    # Totals Row (Row 52 equiv)
+    # Totals Row
     ws.cell(row=subtotal_row, column=6, value="Total weight").font = font_bold
     ws.cell(row=subtotal_row, column=7, value=f"=SUM(G{start_row}:G{end_parts_row})").font = font_bold
-    ws.cell(row=subtotal_row, column=9, value="Total RM Cost").font = font_bold
-    ws.cell(row=subtotal_row, column=10, value=f"=SUM(J{start_row}:J{end_parts_row})").font = font_bold
-    ws.cell(row=subtotal_row, column=15, value="Total MC Cost").font = font_bold
-    ws.cell(row=subtotal_row, column=16, value=f"=SUM(P{start_row}:P{end_parts_row})").font = font_bold
     
-    for c in range(1, 17):
+    if is_admin:
+        ws.cell(row=subtotal_row, column=9, value="Total RM Cost").font = font_bold
+        ws.cell(row=subtotal_row, column=10, value=f"=SUM(J{start_row}:J{end_parts_row})").font = font_bold
+        ws.cell(row=subtotal_row, column=15, value="Total MC Cost").font = font_bold
+        ws.cell(row=subtotal_row, column=16, value=f"=SUM(P{start_row}:P{end_parts_row})").font = font_bold
+    
+    for c in range(1, num_cols + 1):
         cell = ws.cell(row=subtotal_row, column=c)
         cell.fill = fill_subtotal
         cell.border = thin_border
 
     # Summary Block (Bought-outs, Automation, Fabrication, Totals)
-    sr = subtotal_row + 4
+    # The costs of parts are summarized in the Cost Column here!
+    sr = subtotal_row + 3
     ws.cell(row=sr, column=1, value="Sr.No").font = font_bold
-    ws.cell(row=sr, column=2, value="Description").font = font_bold
-    ws.cell(row=sr, column=3, value="Factor/Qty").font = font_bold
-    ws.cell(row=sr, column=4, value="Rate (Rs)").font = font_bold
-    ws.cell(row=sr, column=5, value="Cost (Rs)").font = font_bold
+    ws.cell(row=sr, column=2, value="Damper Cost Breakdown Description").font = font_bold
+    ws.cell(row=sr, column=3, value="Factor / Qty").font = font_bold
+    ws.cell(row=sr, column=4, value="Unit Rate (₹)").font = font_bold
+    ws.cell(row=sr, column=5, value="Cost Column (₹)").font = font_bold
 
     bo_breakdown = quote_data.get("bought_out_breakdown", {})
     auto_breakdown = quote_data.get("automation_breakdown", {})
     fab_rate = quote_data.get("rates_snapshot", {}).get("fabrication_rate_per_kg", 96.0)
     fin_rate = quote_data.get("rates_snapshot", {}).get("finishing_rate_per_kg", 20.0)
     markup_pct = quote_data.get("markup_pct", 10.0)
+    total_rm_val = float(quote_data.get("raw_material_cost", 0.0))
+    total_mc_val = float(quote_data.get("mfg_cost", 0.0))
     
-    # 1: RM Cost
+    # 1: RM Cost in Cost Column
     r1 = sr + 1
     ws.cell(row=r1, column=1, value=1)
-    ws.cell(row=r1, column=2, value="Raw Material Cost")
+    ws.cell(row=r1, column=2, value="Fabricated 45-Part Raw Material Cost")
     ws.cell(row=r1, column=3, value=1)
-    ws.cell(row=r1, column=4, value=f"=J{subtotal_row}")
-    ws.cell(row=r1, column=5, value=f"=C{r1}*D{r1}")
+    if is_admin:
+        ws.cell(row=r1, column=4, value=f"=J{subtotal_row}")
+        ws.cell(row=r1, column=5, value=f"=C{r1}*D{r1}")
+    else:
+        ws.cell(row=r1, column=4, value=round(total_rm_val, 2))
+        ws.cell(row=r1, column=5, value=round(total_rm_val, 2))
 
-    # 2: Machining Cost
+    # 2: Machining Cost in Cost Column
     r2 = sr + 2
     ws.cell(row=r2, column=1, value=2)
-    ws.cell(row=r2, column=2, value="Machining Cost")
+    ws.cell(row=r2, column=2, value="Machining & Labour Cost")
     ws.cell(row=r2, column=3, value=1)
-    ws.cell(row=r2, column=4, value=f"=P{subtotal_row}")
-    ws.cell(row=r2, column=5, value=f"=C{r2}*D{r2}")
+    if is_admin:
+        ws.cell(row=r2, column=4, value=f"=P{subtotal_row}")
+        ws.cell(row=r2, column=5, value=f"=C{r2}*D{r2}")
+    else:
+        ws.cell(row=r2, column=4, value=round(total_mc_val, 2))
+        ws.cell(row=r2, column=5, value=round(total_mc_val, 2))
 
     # 3: Rack
     r3 = sr + 3

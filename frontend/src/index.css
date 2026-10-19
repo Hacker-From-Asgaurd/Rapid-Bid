@@ -2,11 +2,57 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ==========================================================================
+   RAPID BID DESIGN SYSTEM - CLEAN LIGHT PALETTE
+   Consistent, accessible, token-based design system
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+  
+  /* Core Surfaces */
+  --bg-base: #F9F7F2;
+  --bg-surface: #FFFFFF;
+  --bg-elevated: #F4EFE6;
+  
+  /* Borders */
+  --border-subtle: #EAE5DB;
+  --border-strong: #C5BCAE;
+  
+  /* Text */
+  --text-primary: #242826;
+  --text-secondary: #4A5450;
+  --text-muted: #6E7773;
+  
+  /* Accent & Interactions */
+  --accent: #2F4D40;
+  --accent-hover: #22382E;
+  --accent-contrast: #FFFFFF;
+  --accent-text: #2F4D40;
+  --focus-ring: #2F4D40;
+  
+  /* Status */
+  --success: #166534;
+  --success-bg: #DCFCE7;
+  --warning: #854D0E;
+  --warning-bg: #FEF9C3;
+  --error: #991B1B;
+  --error-bg: #FEE2E2;
+  --info: #1E40AF;
+  --info-bg: #DBEAFE;
+  
+  /* Pastel Card Tints */
+  --tint-lavender: rgba(238, 242, 255, 0.85);
+  --tint-mint: rgba(236, 253, 245, 0.85);
+  --tint-peach: rgba(255, 247, 237, 0.85);
+  --tint-sky: rgba(240, 249, 255, 0.85);
+}
+
 @layer base {
   body {
     font-family: 'Outfit', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    background-color: #F9F7F2;
-    color: #242826;
+    background-color: var(--bg-base);
+    color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -14,21 +60,131 @@
   code, pre {
     font-family: 'JetBrains Mono', monospace;
   }
+
+  ::selection {
+    background-color: rgba(47, 77, 64, 0.2);
+    color: var(--text-primary);
+  }
+
+  /* Accessible Focus Rings */
+  *:focus-visible {
+    outline: 2px solid var(--focus-ring) !important;
+    outline-offset: 2px !important;
+  }
 }
 
-/* Custom pastel soft scrollbars */
+/* Explicit Token Utilities (Guarantee instant styling across all components) */
+.bg-base { background-color: var(--bg-base) !important; }
+.bg-surface { background-color: var(--bg-surface) !important; }
+.bg-elevated { background-color: var(--bg-elevated) !important; }
+.border-subtle { border-color: var(--border-subtle) !important; }
+.border-strong { border-color: var(--border-strong) !important; }
+.text-primary { color: var(--text-primary) !important; }
+.text-secondary { color: var(--text-secondary) !important; }
+.text-muted { color: var(--text-muted) !important; }
+.bg-tint-lavender { background-color: var(--tint-lavender) !important; }
+.bg-tint-mint { background-color: var(--tint-mint) !important; }
+.bg-tint-peach { background-color: var(--tint-peach) !important; }
+.bg-tint-sky { background-color: var(--tint-sky) !important; }
+.bg-success-bg { background-color: var(--success-bg) !important; }
+.text-success { color: var(--success) !important; }
+.border-success { border-color: var(--success) !important; }
+.bg-warning-bg { background-color: var(--warning-bg) !important; }
+.text-warning { color: var(--warning) !important; }
+.border-warning { border-color: var(--warning) !important; }
+.bg-error-bg { background-color: var(--error-bg) !important; }
+.text-error { color: var(--error) !important; }
+.border-error { border-color: var(--error) !important; }
+.bg-info-bg { background-color: var(--info-bg) !important; }
+.text-info { color: var(--info) !important; }
+.border-info { border-color: var(--info) !important; }
+.text-accent-text { color: var(--accent-text) !important; }
+.text-accent-contrast { color: var(--accent-contrast) !important; }
+.bg-accent { background-color: var(--accent) !important; }
+.bg-accent:hover { background-color: var(--accent-hover) !important; }
+
+/* Custom Scrollbars */
 ::-webkit-scrollbar {
   width: 7px;
   height: 7px;
 }
 ::-webkit-scrollbar-track {
-  background: #F4EFE6;
+  background: var(--bg-base);
 }
 ::-webkit-scrollbar-thumb {
-  background: #D9D2C5;
+  background: var(--border-subtle);
   border-radius: 9999px;
-  border: 2px solid #F4EFE6;
+  border: 2px solid var(--bg-base);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #BDB4A4;
+  background: var(--border-strong);
+}
+
+/* Image Stage */
+.image-stage {
+  border-radius: 1rem;
+  background-color: var(--bg-elevated);
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+
+/* Overridden rate & manually edited highlights: Warning tint */
+.rate-overridden,
+.manually-edited {
+  background-color: var(--warning-bg) !important;
+  color: var(--warning) !important;
+  border-color: var(--warning) !important;
+}
+
+/* Status Badges */
+.badge-verified {
+  background-color: var(--success-bg);
+  color: var(--success);
+  border: 1px solid var(--success);
+}
+
+.badge-estimated {
+  background-color: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+}
+
+.badge-placeholder-banner {
+  background-color: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+}
+
+/* Buttons */
+button.btn-accent,
+.btn-primary {
+  background-color: var(--accent);
+  color: var(--accent-contrast);
+}
+button.btn-accent:hover,
+.btn-primary:hover {
+  background-color: var(--accent-hover);
+}
+
+a.text-accent,
+button.text-accent {
+  color: var(--accent-text);
+}
+
+/* ==========================================================================
+   PRINT / PDF EXPORT RULES
+   ========================================================================== */
+@media print {
+  html, body {
+    background-color: #FFFFFF !important;
+    color: #1F2937 !important;
+    color-scheme: light !important;
+  }
+  
+  * {
+    color-scheme: light !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
 }

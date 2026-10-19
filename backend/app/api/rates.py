@@ -52,10 +52,12 @@ def get_current_rates(db: Session = Depends(get_db)):
         "automation_prices": latest.automation_prices,
         "fabrication_rate_per_kg": latest.fabrication_rate_per_kg,
         "finishing_rate_per_kg": latest.finishing_rate_per_kg,
-        "default_markup_pct": latest.default_markup_pct
+        "default_markup_pct": latest.default_markup_pct,
+        "part_rates": latest.part_rates or {}
     }
 
 @router.post("", dependencies=[Depends(require_roles(["Admin", "Manager"]))])
+@router.post("/update", dependencies=[Depends(require_roles(["Admin", "Manager"]))])
 def update_rates(
     payload: RatesUpdateRequest,
     current_user: User = Depends(get_current_user),
@@ -76,7 +78,8 @@ def update_rates(
             "automation_prices": latest.automation_prices,
             "fabrication_rate_per_kg": latest.fabrication_rate_per_kg,
             "finishing_rate_per_kg": latest.finishing_rate_per_kg,
-            "default_markup_pct": latest.default_markup_pct
+            "default_markup_pct": latest.default_markup_pct,
+            "part_rates": latest.part_rates or {}
         }
 
     new_rates = RatesVersion(
@@ -88,6 +91,7 @@ def update_rates(
         fabrication_rate_per_kg=payload.fabrication_rate_per_kg,
         finishing_rate_per_kg=payload.finishing_rate_per_kg,
         default_markup_pct=payload.default_markup_pct,
+        part_rates=payload.part_rates,
         created_by_id=current_user.id
     )
     db.add(new_rates)
@@ -106,7 +110,8 @@ def update_rates(
             "automation_prices": new_rates.automation_prices,
             "fabrication_rate_per_kg": new_rates.fabrication_rate_per_kg,
             "finishing_rate_per_kg": new_rates.finishing_rate_per_kg,
-            "default_markup_pct": new_rates.default_markup_pct
+            "default_markup_pct": new_rates.default_markup_pct,
+            "part_rates": new_rates.part_rates or {}
         },
         changed_by_id=current_user.id
     )

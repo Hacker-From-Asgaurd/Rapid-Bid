@@ -1,6 +1,10 @@
 import axios from 'axios';
 
-const API_BASE = '/api';
+const envApiUrl = import.meta.env.VITE_API_URL;
+const rawApiUrl = envApiUrl || (import.meta.env.PROD ? '/api' : 'http://localhost:8000');
+const API_BASE = rawApiUrl === '/api' || rawApiUrl.endsWith('/api')
+  ? rawApiUrl
+  : `${rawApiUrl.replace(/\/+$/, '')}/api`;
 
 const apiClient = axios.create({
   baseURL: API_BASE,
@@ -99,40 +103,109 @@ export const quotesApi = {
     const res = await apiClient.post(`/quotes/${quoteId}/duplicate`);
     return res.data;
   },
-  changeStatus: async (quoteId, status) => {
-    const res = await apiClient.put(`/quotes/${quoteId}/status`, { status });
+  changeStatus: async (quoteId, status, confirmStale = false, comment = null) => {
+    const res = await apiClient.patch(`/quotes/${quoteId}/status`, { status, confirm_stale: confirmStale, comment });
+    return res.data;
+  },
+  submitApproval: async (quoteId) => {
+    const res = await apiClient.post(`/quotes/${quoteId}/submit-approval`);
+    return res.data;
+  },
+  approve: async (quoteId, comment = '') => {
+    const res = await apiClient.post(`/quotes/${quoteId}/approve`, { status: 'Approved', comment });
+    return res.data;
+  },
+  reject: async (quoteId, comment = '') => {
+    const res = await apiClient.post(`/quotes/${quoteId}/reject`, { status: 'Draft', comment });
+    return res.data;
+  },
+  getPendingApprovalsCount: async () => {
+    const res = await apiClient.get('/quotes/approvals/pending-count');
+    return res.data;
+  },
+  getImpactMetrics: async () => {
+    const res = await apiClient.get('/quotes/impact');
+    return res.data;
+  },
+  parseRfq: async (text) => {
+    const res = await apiClient.post('/quotes/rfq/parse', { text });
+    return res.data;
+  },
+  getRfqSamples: async () => {
+    const res = await apiClient.get('/quotes/rfq/samples');
     return res.data;
   },
   deleteDraft: async (quoteId) => {
     const res = await apiClient.delete(`/quotes/${quoteId}`);
     return res.data;
   },
-  downloadPdf: (quoteIdOrData) => {
+  getSettings: async () => {
+    const res = await apiClient.get('/company-settings');
+    return res.data;
+  },
+  getActiveRates: async () => {
+    const res = await apiClient.get('/rates/active');
+    return res.data;
+  },
+  downloadCustomerPdf: (quoteIdOrData) => {
     if (typeof quoteIdOrData === 'object' && quoteIdOrData !== null) {
-      return apiClient.post('/quotes/export-pdf', quoteIdOrData, { responseType: 'blob' }).then((res) => {
+      return apiClient.post('/quotes/export-pdf?type=customer', quoteIdOrData, { responseType: 'blob' }).then((res) => {
         const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
         const link = document.createElement('a');
         link.href = url;
-        const qNum = quoteIdOrData.quote_number || 'Live_Quotation';
-        link.setAttribute('download', `Quotation_${qNum}.pdf`);
+        const qNum = quoteIdOrData.quote_number || 'Quotation';
+        link.setAttribute('download', `${qNum}_Customer.pdf`);
         document.body.appendChild(link);
         link.click();
         link.remove();
       });
     }
-    return apiClient.get(`/quotes/${quoteIdOrData}/pdf`, { responseType: 'blob' }).then((res) => {
+    return apiClient.get(`/quotes/${quoteIdOrData}/customer-pdf`, { responseType: 'blob' }).then((res) => {
       const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `Quotation_${quoteIdOrData}.pdf`);
+      link.setAttribute('download', `Quote_${quoteIdOrData}_Customer.pdf`);
       document.body.appendChild(link);
       link.click();
       link.remove();
     });
   },
-  downloadExcel: (quoteIdOrData) => {
+  downloadCostSheetPdf: (quoteIdOrData) => {
     if (typeof quoteIdOrData === 'object' && quoteIdOrData !== null) {
-      return apiClient.post('/quotes/export-excel', quoteIdOrData, { responseType: 'blob' }).then((res) => {
+      return apiClient.post('/quotes/export-pdf?type=cost_sheet', quoteIdOrData, { responseType: 'blob' }).then((res) => {
+        const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+        const link = document.createElement('a');
+        link.href = url;
+        const qNum = quoteIdOrData.quote_number || 'CostSheet';
+        link.setAttribute('download', `${qNum}_CostSheet.pdf`);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      });
+    }
+    return apiClient.get(`/quotes/${quoteIdOrData}/cost-sheet-pdf`, { responseType: 'blob' }).then((res) => {
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `Quote_${quoteIdOrData}_CostSheet.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    });
+  },
+  downloadPdf: (quoteIdOrData, type = 'customer') => {
+    if (type === 'cost_sheet') {
+      return quotesApi.downloadCostSheetPdf(quoteIdOrData);
+    }
+    return quotesApi.downloadCustomerPdf(quoteIdOrData);
+  },
+  downloadExcel: (quoteIdOrData, isAdmin = false) => {
+    if (typeof quoteIdOrData === 'object' && quoteIdOrData !== null) {
+      const payload = {
+        ...quoteIdOrData,
+        is_admin: quoteIdOrData.is_admin !== undefined ? quoteIdOrData.is_admin : isAdmin,
+      };
+      return apiClient.post('/quotes/export-excel', payload, { responseType: 'blob' }).then((res) => {
         const url = window.URL.createObjectURL(
           new Blob([res.data], {
             type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -147,7 +220,7 @@ export const quotesApi = {
         link.remove();
       });
     }
-    return apiClient.get(`/quotes/${quoteIdOrData}/excel`, { responseType: 'blob' }).then((res) => {
+    return apiClient.get(`/quotes/${quoteIdOrData}/excel?is_admin=${isAdmin}`, { responseType: 'blob' }).then((res) => {
       const url = window.URL.createObjectURL(
         new Blob([res.data], {
           type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -160,6 +233,13 @@ export const quotesApi = {
       link.click();
       link.remove();
     });
+  },
+};
+
+export const demoApi = {
+  loadDemoData: async () => {
+    const res = await apiClient.post('/demo/load');
+    return res.data;
   },
 };
 
