@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import DamperLogo from './DamperLogo';
-import { 
-  FileText, 
+import {
+  FileText,
   BarChart3,
   SlidersHorizontal,
   ShieldCheck,
@@ -22,12 +22,12 @@ export default function Navbar({ user, currentView, setView, onLogout, onSwitchU
       .then((res) => {
         setPendingCount(res.pending_count || 0);
       })
-      .catch(() => {});
+      .catch(() => { });
 
     const interval = setInterval(() => {
       quotesApi.getPendingApprovalsCount()
         .then((res) => setPendingCount(res.pending_count || 0))
-        .catch(() => {});
+        .catch(() => { });
     }, 15000);
     return () => clearInterval(interval);
   }, [currentView]);
@@ -39,10 +39,10 @@ export default function Navbar({ user, currentView, setView, onLogout, onSwitchU
       <header className="backdrop-blur-md border-b transition-colors duration-200 bg-surface/95 border-border-subtle text-text-primary shadow-[0_1px_3px_0_rgba(20,18,31,0.03)]">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16 gap-2">
-            
+
             {/* Logo & Brand: RAPID BID with Damper Logo */}
-            <div 
-              className="flex items-center gap-3 cursor-pointer group shrink-0" 
+            <div
+              className="flex items-center gap-3 cursor-pointer group shrink-0"
               onClick={() => setView('dashboard')}
             >
               <div className="w-10 h-10 rounded-xl flex items-center justify-center shadow-md group-hover:scale-105 transition-transform border bg-accent text-accent-contrast border-accent">
@@ -69,15 +69,14 @@ export default function Navbar({ user, currentView, setView, onLogout, onSwitchU
 
             {/* Streamlined Navigation Tabs */}
             <nav className="flex items-center space-x-1 sm:space-x-1.5 overflow-x-auto py-1 mx-2">
-              
+
               {/* 1. Dashboard Tab */}
               <button
                 onClick={() => setView('dashboard')}
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 cursor-pointer ${
-                  currentView === 'dashboard'
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 cursor-pointer ${currentView === 'dashboard'
                     ? 'bg-accent text-accent-contrast shadow-sm ring-2 ring-focus-ring/25'
                     : 'text-text-secondary hover:text-text-primary hover:bg-elevated'
-                }`}
+                  }`}
               >
                 <BarChart3 className="w-3.5 h-3.5" />
                 <span>Dashboard</span>
@@ -86,11 +85,10 @@ export default function Navbar({ user, currentView, setView, onLogout, onSwitchU
               {/* 2. Create Quote Tab */}
               <button
                 onClick={() => setView('new-quote')}
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 cursor-pointer ${
-                  currentView === 'new-quote'
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 cursor-pointer ${currentView === 'new-quote'
                     ? 'bg-accent text-accent-contrast shadow-sm ring-2 ring-focus-ring/25'
                     : 'text-text-secondary hover:text-text-primary hover:bg-elevated'
-                }`}
+                  }`}
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Create Quote</span>
@@ -99,11 +97,10 @@ export default function Navbar({ user, currentView, setView, onLogout, onSwitchU
               {/* 3. Quotes List Tab */}
               <button
                 onClick={() => setView('quotes')}
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 relative cursor-pointer ${
-                  currentView === 'quotes'
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 relative cursor-pointer ${currentView === 'quotes'
                     ? 'bg-accent text-accent-contrast shadow-sm ring-2 ring-focus-ring/25'
                     : 'text-text-secondary hover:text-text-primary hover:bg-elevated'
-                }`}
+                  }`}
               >
                 <FileText className="w-3.5 h-3.5" />
                 <span>{isAdmin ? 'All Quotes & Approvals' : 'My Quotes'}</span>
@@ -118,11 +115,10 @@ export default function Navbar({ user, currentView, setView, onLogout, onSwitchU
               {isAdmin && (
                 <button
                   onClick={() => setView('rates')}
-                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 cursor-pointer ${
-                    currentView === 'rates'
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 cursor-pointer ${currentView === 'rates'
                       ? 'bg-accent text-accent-contrast shadow-sm ring-2 ring-focus-ring/25'
                       : 'text-text-secondary hover:text-text-primary hover:bg-elevated'
-                  }`}
+                    }`}
                   title="Master Rates & Costing: Set raw material ₹/kg, bought-outs, and margin rules"
                 >
                   <SlidersHorizontal className="w-3.5 h-3.5" />

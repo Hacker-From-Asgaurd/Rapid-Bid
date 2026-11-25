@@ -104,9 +104,9 @@ export default function App() {
           )}
 
           {currentView === 'new-quote' && (
-            <NewQuote 
-              setView={setView} 
-              setSelectedQuoteId={setSelectedQuoteId} 
+            <NewQuote
+              setView={setView}
+              setSelectedQuoteId={setSelectedQuoteId}
               user={user}
               rfqPrefill={rfqPrefill}
             />

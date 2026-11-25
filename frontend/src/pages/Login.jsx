@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import DamperLogo from '../components/DamperLogo';
-import { 
-  Lock, 
-  User, 
-  ArrowRight, 
-  AlertCircle, 
-  CheckCircle2, 
-  KeyRound, 
-  Eye, 
+import {
+  Lock,
+  User,
+  ArrowRight,
+  AlertCircle,
+  CheckCircle2,
+  KeyRound,
+  Eye,
   EyeOff,
   ShieldCheck,
   Calculator,
@@ -56,7 +56,7 @@ export default function Login({ onLoginSuccess }) {
 
       // 2. Guaranteed offline fallback so admin and member always work properly
       if (
-        (u === 'admin' || u === 'admin@damperquote.com') && 
+        (u === 'admin' || u === 'admin@damperquote.com') &&
         (p === 'admin123' || p === 'DamperQuote2026!')
       ) {
         const offlineAdmin = {
@@ -73,7 +73,7 @@ export default function Login({ onLoginSuccess }) {
       }
 
       if (
-        (u === 'member' || u === 'member@damperquote.com') && 
+        (u === 'member' || u === 'member@damperquote.com') &&
         (p === 'member123' || p === 'DamperQuote2026!')
       ) {
         const offlineMember = {
@@ -161,11 +161,11 @@ export default function Login({ onLoginSuccess }) {
 
   return (
     <div className="min-h-screen flex flex-col font-sans transition-colors duration-200 bg-base text-text-primary">
-      
+
       {/* 1. TOP HEADER BAR: BRAND LOGO + ACCESSIBLE THEME TOGGLE */}
       <header className="w-full border-b transition-colors duration-200 bg-surface/95 border-border-subtle">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          
+
           {/* Logo with Damper Icon */}
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl flex items-center justify-center shadow-md transition-all bg-accent text-accent-contrast border border-accent">
@@ -188,7 +188,7 @@ export default function Login({ onLoginSuccess }) {
 
           {/* Right Header Actions: Quick Roles & Theme Switcher */}
           <div className="flex items-center gap-3">
-            
+
             {/* Quick Demo Fill Buttons */}
             <div className="hidden sm:flex items-center gap-1.5 p-1 rounded-xl border text-xs bg-elevated border-border-subtle">
               <button
@@ -219,13 +219,13 @@ export default function Login({ onLoginSuccess }) {
       {/* 2. MAIN CENTERPIECE: UNIFIED INFORMATIVE DETAILS + LOGIN CARD */}
       <main className="flex-1 flex items-center justify-center p-4 sm:p-6 lg:p-8">
         <div className="w-full max-w-5xl">
-          
+
           {/* Unified Container Card */}
           <div className="rounded-2xl sm:rounded-3xl border shadow-xl overflow-hidden transition-colors duration-200 grid grid-cols-1 lg:grid-cols-12 bg-surface border-border-subtle">
 
             {/* LEFT SIDE: INFORMATIVE DETAILS */}
             <div className="lg:col-span-6 p-6 sm:p-8 lg:p-10 flex flex-col justify-between border-b lg:border-b-0 lg:border-r transition-colors duration-200 bg-elevated border-border-subtle">
-              
+
               <div className="space-y-6">
                 {/* Header with Damper Logo */}
                 <div>
@@ -326,10 +326,10 @@ export default function Login({ onLoginSuccess }) {
 
             {/* RIGHT SIDE: AUTHENTICATION FORM */}
             <div className="lg:col-span-6 p-6 sm:p-8 lg:p-10 flex flex-col justify-center bg-surface">
-              
+
               {!mustChangePassword ? (
                 <div className="space-y-5 max-w-md mx-auto w-full">
-                  
+
                   {/* Card Title */}
                   <div>
                     <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-text-primary">
@@ -345,11 +345,10 @@ export default function Login({ onLoginSuccess }) {
                     <button
                       type="button"
                       onClick={() => handleSelectRole('admin')}
-                      className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                        selectedRole === 'admin'
+                      className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${selectedRole === 'admin'
                           ? 'bg-accent text-accent-contrast shadow-sm'
                           : 'text-text-secondary hover:text-text-primary'
-                      }`}
+                        }`}
                     >
                       <ShieldCheck className="w-3.5 h-3.5" />
                       <span>Plant Admin</span>
@@ -358,11 +357,10 @@ export default function Login({ onLoginSuccess }) {
                     <button
                       type="button"
                       onClick={() => handleSelectRole('member')}
-                      className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                        selectedRole === 'member'
+                      className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${selectedRole === 'member'
                           ? 'bg-accent text-accent-contrast shadow-sm'
                           : 'text-text-secondary hover:text-text-primary'
-                      }`}
+                        }`}
                     >
                       <Calculator className="w-3.5 h-3.5" />
                       <span>Quotation Member</span>
